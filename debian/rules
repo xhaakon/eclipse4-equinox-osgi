@@ -1,0 +1,38 @@
+#!/usr/bin/make -f
+
+export JAVA_HOME=/usr/lib/jvm/default-java
+export CFLAGS=$(shell dpkg-buildflags --get CFLAGS)
+export LDFLAGS=$(shell dpkg-buildflags --get LDFLAGS)
+export CPPFLAGS=$(shell dpkg-buildflags --get CPPFLAGS)
+
+export JAVA_TOOL_OPTIONS="-Dfile.encoding=UTF-8"
+
+%:
+	dh $@
+
+override_dh_auto_build-arch:
+	DEFAULT_OS=linux \
+	DEFAULT_WS=gtk \
+	DEFAULT_OS_ARCH=`uname -m` \
+	make -C features/org.eclipse.equinox.executable.feature/library/gtk \
+		-f make_linux.mak
+
+override_dh_auto_build-indep:
+	jh_generateorbitdir
+	dh_auto_build -i
+
+	debian/build_bundle bundles/org.eclipse.osgi
+	debian/build_bundle bundles/org.eclipse.equinox.launcher
+	debian/build_bundle bundles/org.eclipse.osgi.services
+
+override_dh_clean:
+	dh_clean
+	jh_clean
+	make -C features/org.eclipse.equinox.executable.feature/library/gtk \
+		-f make_linux.mak clean \
+
+VERSION=$(shell dpkg-parsechangelog -S Version | cut -d- -f1)
+get-orig-source:
+	uscan --force-download --download-version $(VERSION) \
+		--rename --destdir=$(CURDIR) \
+		--repack --compression xz

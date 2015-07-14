@@ -1,0 +1,4 @@
+version=3
+opts=uversionmangle=s/\.$/.0/ \
+http://git.eclipse.org/c/equinox/rt.equinox.framework.git/refs \
+.*/snapshot/R(\d+)_(\d+)(?:_(\d+))?.tar.xz

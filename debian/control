@@ -1,0 +1,59 @@
+Source: eclipse4-equinox-osgi
+Section: java
+Priority: optional
+Maintainer: Debian Java Maintainers <pkg-java-maintainers@lists.alioth.debian.org>
+Uploaders:
+ Jakub Adam <jakub.adam@ktknet.cz>
+Build-Depends:
+ debhelper (>= 9),
+ default-jdk,
+ javahelper,
+ libgtk-3-dev,
+ libosgi-annotation-java,
+ libservlet3.1-java
+Standards-Version: 3.9.6
+Vcs-Git: git://anonscm.debian.org/pkg-java/eclipse4-equinox-osgi.git
+Vcs-Browser: http://anonscm.debian.org/cgit/pkg-java/eclipse4-equinox-osgi.git
+Homepage: https://www.eclipse.org/equinox
+
+Package: libequinox4-osgi-java
+Architecture: all
+Depends:
+ ${misc:Depends},
+ ${shlibs:Depends}
+Recommends:
+ libservlet3.1-java
+Description: Equinox OSGi framework
+ Equinox is an implementation of the OSGi core framework specification, a set of
+ bundles that implement various optional OSGi services and other infrastructure
+ for running OSGi-based systems. The Equinox OSGi core framework implementation
+ is used as the reference implementation and as such it implements all the
+ required features of the latest OSGi core framework specification.
+
+Package: eclipse4-launcher
+Architecture: any
+Depends:
+ default-jre | java7-runtime,
+ eclipse4-launcher-common (>= ${source:Version}),
+ ${misc:Depends},
+ ${shlibs:Depends}
+Description: Equinox blah
+ blah
+
+Package: eclipse4-launcher-common
+Architecture: all
+Depends:
+ libequinox4-osgi-java (= ${binary:Version}),
+ ${misc:Depends},
+ ${shlibs:Depends}
+Description: Equinox blah
+ blah
+
+Package: eclipse4-build-helper
+Architecture: all
+Depends:
+ python:any,
+ ${misc:Depends},
+ ${shlibs:Depends}
+Description: Equinox blah
+ blah

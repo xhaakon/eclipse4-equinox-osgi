@@ -1,0 +1,2 @@
+debian/eclipse4.ini /etc
+debian/.eclipse-build/orbitdeps/org.eclipse.equinox.launcher_*.jar /usr/share/eclipse4/plugins

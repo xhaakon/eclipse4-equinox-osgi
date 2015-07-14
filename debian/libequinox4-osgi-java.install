@@ -1,0 +1,3 @@
+debian/.eclipse-build/orbitdeps/org.eclipse.osgi_*.jar /usr/share/eclipse4/plugins
+debian/.eclipse-build/orbitdeps/org.eclipse.osgi.services_*.jar /usr/share/eclipse4/plugins
+debian/.eclipse-build/orbitdeps/javax.servlet_*.jar /usr/share/eclipse4/plugins

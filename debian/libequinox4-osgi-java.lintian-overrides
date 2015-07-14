@@ -1,0 +1,2 @@
+# Follows from an optional OSGi dependency on javax.servlet
+needless-suggest-recommend-libservlet-java

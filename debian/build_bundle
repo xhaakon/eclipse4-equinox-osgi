@@ -1,0 +1,227 @@
+#!/usr/bin/python
+
+import os
+import sys
+import glob
+import fnmatch
+import subprocess
+import shutil
+import tempfile
+
+class BuildProperties:
+	def __init__(self, bundle_dir):
+		self._bundle_dir = bundle_dir
+		self._properties = {}
+
+		file = open(self._bundle_dir + '/build.properties')
+
+		buffer = ''
+
+		for line in file:
+			if line.startswith('#'):
+				continue
+
+			buffer += line.lstrip().rstrip('\\\n')
+			if (not line.endswith('\\\n')) and (len(buffer) > 0):
+				(key, value) = buffer.split('=', 1)
+				self._properties[key.strip()] = value.strip()
+				buffer = ''
+
+	def _file_list(self, value):
+		result = value.split(',')
+		return [ element.strip() for element in result ]
+
+	def __getattr__(self, name):
+		if name == 'source':
+			result = {}
+			for key, value in self._properties.items():
+				if key.startswith('source.'):
+					result[key[len('source.'):]] = self._file_list(value)
+			return result
+
+		if name == 'includes':
+			result = self._file_list(self._properties['bin.includes'])
+			if '.' in result:
+				result.remove('.')
+			return result
+
+		if name == 'jre_target':
+			result = self._properties.get('jre.compilation.profile', '')
+			if result:
+				result = result.split('-',2)[1]
+			else:
+				return '1.7'
+			return result
+
+		if name == 'build_order':
+			result = self._properties.get('jars.compile.order')
+			if not result:
+				result = self.source.keys()
+			else:
+				result = result.split(',')
+			return result
+
+class Manifest:
+	def __init__(self, bundle_dir):
+		self._properties = {}
+
+		file = open(bundle_dir + '/META-INF/MANIFEST.MF')
+
+		key = ''
+
+		for line in file:
+			if line.startswith('\n'):
+				continue
+			elif not line.startswith(' '):
+				(key, value) = line.split(':', 1)
+				key = key.strip()
+				self._properties[key] = value.strip()
+			else:
+				self._properties[key] += line.strip()
+
+	def __getitem__(self, name):
+		if name in self._properties:
+			return self._properties[name]
+		return ''
+
+class BundleBuilder:
+	__ORBITDIR = 'debian/.eclipse-build/orbitdeps'
+	__PLUGINDIR = '/usr/share/eclipse4/plugins'
+
+	__build_env = ''
+
+	def __init__(self, bundle_dir):
+		self.bundle_dir = bundle_dir
+		self.properties = BuildProperties(bundle_dir)
+		self.manifest = Manifest(bundle_dir)
+
+	def build(self):
+		bundle_jar = '{0}_{1}'.format( \
+			self.manifest['Bundle-SymbolicName'].split(';',1)[0], \
+			self.manifest['Bundle-Version'])
+		if self.manifest['Eclipse-BundleShape'] != 'dir':
+			bundle_jar += '.jar'
+		bundle_jar_path = os.path.join(BundleBuilder.__ORBITDIR, bundle_jar)
+		bundle_jar_path = os.path.abspath(bundle_jar_path)
+
+		jars = self.properties.build_order
+
+		for jar in jars:
+			sources = self.properties.source[jar]
+			sources = [ os.path.join(bundle_dir, f) for f in sources ]
+
+			if jar == '.':
+				output_path = bundle_jar_path
+			else:
+				output_path = os.path.join(self.bundle_dir, jar)
+				output_path = os.path.abspath(output_path)
+
+			self.__buildJar(output_path, sources)
+
+		includes = []
+		for pattern in self.properties.includes:
+			include_path = os.path.join(self.bundle_dir, pattern)
+			if os.path.isdir(include_path) or os.path.exists(include_path):
+				includes.append(pattern)
+			else:
+				includes += glob.glob1(self.bundle_dir, pattern)
+
+		if self.manifest['Eclipse-BundleShape'] == 'dir':
+			self.__copyIncludes(bundle_jar_path, includes, self.bundle_dir)
+		else:
+			self.__addIncludes(bundle_jar_path, includes, self.bundle_dir)
+
+	def __buildJar(self, jar_path, sources):
+		output_dir = os.path.dirname(jar_path)
+		if not os.path.exists(output_dir):
+			os.makedirs(output_dir)
+
+		cmd = [ 'jh_build', jar_path, '--no-javadoc' ]
+
+		if self.properties.jre_target:
+			cmd.append('-o-source {0} -target {0}'.format(self.properties.jre_target))
+
+		cmd += sources
+		print(cmd)
+
+		subprocess.call(cmd, env=BundleBuilder.__build_env)
+
+		for srcdir in sources:
+			property_files = BundleBuilder.__collect_property_files(srcdir)
+			if property_files:
+				cmd = [ 'jar', 'uf', jar_path ] + property_files
+				print(cmd)
+				subprocess.call(cmd, cwd=srcdir)
+
+		self.__cleanClasspath(jar_path)
+
+		BundleBuilder.__build_env['CLASSPATH'] += ':' + jar_path
+
+	def __unzipJar(self, jar_path):
+		print('unzipping')
+
+	@staticmethod
+	def __collect_property_files(dir):
+		result = []
+		for dirpath, dirnames, filenames in os.walk(dir):
+			dirpath = dirpath[len(dir):]
+			dirpath = dirpath.lstrip('/')
+			for filename in filenames:
+				if not filename.endswith('.java'):
+					result.append(os.path.join(dirpath, filename))
+		return result;
+
+	def __addIncludes(self, jar_path, includes, include_base_dir):
+		cmd = [ 'jar', 'ufm', os.path.abspath(jar_path), 'META-INF/MANIFEST.MF' ] \
+			+ includes
+
+		print(cmd)
+		subprocess.call(cmd, cwd=include_base_dir)
+
+	def __copyIncludes(self, destination, includes, include_base_dir):
+		if not os.path.isdir(destination):
+			os.mkdir(destination)
+		for include in includes:
+			include = os.path.join(include_base_dir, include);
+			include = include.rstrip('/')
+			if os.path.isdir(include):
+				dst = os.path.join(destination, os.path.basename(include))
+				if not os.path.exists(dst):
+					shutil.copytree(include, dst)
+			else:
+				shutil.copy(include, destination)
+
+	def __cleanClasspath(self, jar_path):
+		fd, manifest = tempfile.mkstemp()
+		os.write(fd, 'Class-Path: \n')
+		os.close(fd)
+
+		subprocess.call(['jar', 'ufm', jar_path, manifest])
+		os.remove(manifest)
+
+	@staticmethod
+	def init():
+		if not os.path.exists(BundleBuilder.__ORBITDIR):
+			os.makedirs(BundleBuilder.__ORBITDIR)
+
+		cp = []
+
+		for dir in [ BundleBuilder.__ORBITDIR, BundleBuilder.__PLUGINDIR ]:
+			for dirpath, dirnames, filenames in os.walk(dir, followlinks=True):
+				for filename in fnmatch.filter(filenames, '*.jar'):
+					cp.append(os.path.join(dirpath, filename))
+
+		BundleBuilder.__build_env = os.environ.copy()
+		BundleBuilder.__build_env['CLASSPATH'] = ':'.join(cp)
+
+BundleBuilder.init()
+
+if __name__ == '__main__':
+	if len(sys.argv) == 1:
+		print('Usage:', os.path.basename(__file__), 'path_to_bundle')
+		sys.exit(1)
+
+	bundle_dir = sys.argv[1]
+
+	builder = BundleBuilder(bundle_dir)
+	builder.build()

@@ -1,0 +1,2 @@
+features/org.eclipse.equinox.executable.feature/library/gtk/eclipse /usr/lib/eclipse4
+features/org.eclipse.equinox.executable.feature/library/gtk/eclipse_*.so /usr/lib/eclipse4

@@ -1,0 +1,21 @@
+From: Jakub Adam <jakub.adam@ktknet.cz>
+Date: Thu, 6 Aug 2015 14:44:05 +0200
+Subject: fix-hang-on-osgi-exit
+
+---
+ .../src/org/eclipse/osgi/internal/framework/EquinoxBundle.java          | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/bundles/org.eclipse.osgi/container/src/org/eclipse/osgi/internal/framework/EquinoxBundle.java b/bundles/org.eclipse.osgi/container/src/org/eclipse/osgi/internal/framework/EquinoxBundle.java
+index eacfcbc..c699662 100644
+--- a/bundles/org.eclipse.osgi/container/src/org/eclipse/osgi/internal/framework/EquinoxBundle.java
++++ b/bundles/org.eclipse.osgi/container/src/org/eclipse/osgi/internal/framework/EquinoxBundle.java
+@@ -156,7 +156,7 @@ public class EquinoxBundle implements Bundle, BundleReference {
+ 							@Override
+ 							public void run() {
+ 								try {
+-									stop();
++									stop(StopOptions.TRANSIENT);
+ 								} catch (Throwable e) {
+ 									SystemBundle.this.getEquinoxContainer().getLogServices().log(EquinoxContainer.NAME, FrameworkLogEntry.ERROR, "Error stopping the framework.", e); //$NON-NLS-1$
+ 								}

@@ -1,0 +1,3 @@
+remove-legacy-gtk2-dependency.patch
+enable-hardening.patch
+fix-hang-on-osgi-exit.patch
