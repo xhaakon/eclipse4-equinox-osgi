@@ -1,0 +1,414 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright (c) 2012, 2014 Eclipse Foundation.
+  All rights reserved. This program and the accompanying materials
+  are made available under the terms of the Eclipse Distribution License v1.0
+  which accompanies this distribution, and is available at
+  http://www.eclipse.org/org/documents/edl-v10.php
+
+  Contributors:
+     Igor Fedorenko - initial implementation
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <parent>
+    <artifactId>rt.equinox.framework</artifactId>
+    <groupId>org.eclipse.equinox.framework</groupId>
+    <version>4.5.0-SNAPSHOT</version>
+    <relativePath>../../</relativePath>
+  </parent>
+  <groupId>org.eclipse.equinox.feature</groupId>
+  <artifactId>org.eclipse.equinox.executable</artifactId>
+  <version>3.6.200-SNAPSHOT</version>
+  <packaging>eclipse-feature</packaging>
+
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>repack</id>
+            <phase>package</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <!-- note that here we reference previously declared dependency -->
+                <unzip src="${project.build.directory}/${project.build.finalName}.jar" dest="${project.build.directory}/tmp"/>
+                <copy file="resources/build.properties" todir="${project.build.directory}/tmp"/>
+                <copy file="resources/build.xml" todir="${project.build.directory}/tmp"/>
+                <zip basedir="${project.build.directory}/tmp" destfile="${project.build.directory}/${project.build.finalName}.jar"/>
+                <!-- now the modified jar is available -->
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>xml-maven-plugin</artifactId>
+        <version>1.0</version>
+        <executions>
+          <execution>
+            <id>generate-extra-iu</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>transform</goal>
+            </goals>
+          </execution>
+        </executions>
+        <configuration>
+          <transformationSets>
+            <transformationSet>
+              <dir>target</dir>
+              <includes>
+                <include>p2content.xml</include>
+              </includes>
+              <stylesheet>cp-content.xsl</stylesheet>
+            </transformationSet>
+          </transformationSets>
+        </configuration>
+      </plugin>
+      <plugin>
+        <artifactId>maven-resources-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>copy-extra-iu</id>
+            <phase>verify</phase>
+            <goals>
+              <goal>copy-resources</goal>
+            </goals>
+            <configuration>
+              <outputDirectory>${basedir}/target</outputDirectory>
+              <resources>
+                <resource>
+                  <directory>${basedir}/target/generated-resources/xml/xslt</directory>
+                  <includes>
+                    <include>p2content.xml</include>
+                  </includes>
+                </resource>
+              </resources>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <profile>
+      <id>build-native-launchers-gtk.linux.x86_64</id>
+      <activation>
+        <property>
+          <name>native</name>
+          <value>gtk.linux.x86_64</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>compile-executable-natives</id>
+                <phase>generate-resources</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/gtk/" target="build_eclipse"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>clean-executable-natives</id>
+                <phase>clean</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/gtk/" target="clean"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>build-native-launchers-gtk.linux.x86</id>
+      <activation>
+        <property>
+          <name>native</name>
+          <value>gtk.linux.x86</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>compile-executable-natives</id>
+                <phase>generate-resources</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/gtk/" target="build_eclipse"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>clean-executable-natives</id>
+                <phase>clean</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/gtk/" target="clean"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>build-native-launchers-gtk.linux.ppc64le</id>
+      <activation>
+        <property>
+          <name>native</name>
+          <value>gtk.linux.ppc64le</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>compile-executable-natives</id>
+                <phase>generate-resources</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/gtk/" target="build_eclipse"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>clean-executable-natives</id>
+                <phase>clean</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/gtk/" target="clean"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>build-native-launchers-win32.win32.x86_64</id>
+      <activation>
+        <property>
+          <name>native</name>
+          <value>win32.win32.x86_64</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>compile-executable-natives</id>
+                <phase>generate-resources</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/win32/" target="build_eclipse"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>clean-executable-natives</id>
+                <phase>clean</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/win32/" target="clean"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>build-native-launchers-win32.win32.x86</id>
+      <activation>
+        <property>
+          <name>native</name>
+          <value>win32.win32.x86</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>compile-executable-natives</id>
+                <phase>generate-resources</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/win32/" target="build_eclipse"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>clean-executable-natives</id>
+                <phase>clean</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/win32/" target="clean"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>build-native-launchers-cocoa.macosx.x86_64</id>
+      <activation>
+        <property>
+          <name>native</name>
+          <value>cocoa.macosx.x86_64</value>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>compile-executable-natives</id>
+                <phase>generate-resources</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/carbon/" target="build_eclipse"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+              <execution>
+                <id>clean-executable-natives</id>
+                <phase>clean</phase>
+                <configuration>
+                  <target>
+                    <ant antfile="build.xml" dir="library/carbon/" target="clean"/>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>assemble-launchers</id>
+      <activation>
+        <property>
+          <!-- workaround. activeByDefault is disabled when another profile is
+            selected. -->
+          <name>!longnotexistingproperty</name>
+        </property>
+      </activation>
+      <build>
+        <plugins>
+          <plugin>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>copy-executable-natives</id>
+                <phase>process-resources</phase>
+                <configuration>
+                  <target>
+                    <!-- We need to get binary bits from binary repo -->
+                    <!-- If local binaries had been built, copy will not overwrite
+                      them -->
+                    <echo message="Copy eclipse binaries to launcher binaries"/>
+                    <copy todir="bin" verbose="true" includeEmptyDirs="false" failonerror="true">
+                      <fileset dir="../../../rt.equinox.binaries/org.eclipse.equinox.executable/bin/">
+                        <include name="cocoa/macosx/x86_64/**/*"/>
+                        <include name="gtk/aix/ppc/**/*"/>
+                        <include name="gtk/aix/ppc64/**/*"/>
+                        <include name="gtk/hpux/ia64/**/*"/>
+                        <include name="gtk/linux/ppc/**/*"/>
+                        <include name="gtk/linux/ppc64/**/*"/>
+                        <include name="gtk/linux/ppc64le/**/*"/>
+                        <include name="gtk/linux/x86/**/*"/>
+                        <include name="gtk/linux/x86_64/**/*"/>
+                        <include name="gtk/solaris/sparc/**/*"/>
+                        <include name="gtk/solaris/x86/**/*"/>
+                        <include name="win32/win32/x86/**/*"/>
+                        <include name="win32/win32/x86_64/**/*"/>
+                      </fileset>
+                      <fileset dir="../../../rt.equinox.binaries/org.eclipse.equinox.executable/contributed/">
+                        <include name="gtk/linux/s390/**/*"/>
+                        <include name="gtk/linux/s390x/**/*"/>
+                      </fileset>
+                    </copy>
+                    <!-- rename eclipse launchers to "launcher" -->
+                    <move todir="bin" verbose="true">
+                      <fileset dir="bin"/>
+                      <regexpmapper from="^(.*[/\\])eclipse(.exe)?$" to="\1launcher\2"/>
+                    </move>
+                  </target>
+                </configuration>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
+</project>
