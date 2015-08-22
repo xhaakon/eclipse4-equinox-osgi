@@ -61,6 +61,8 @@ class BuildProperties:
 				result = result.split(',')
 			return result
 
+		raise Exception('Unknown build property ' + name)
+
 class Manifest:
 	def __init__(self, bundle_dir):
 		self._properties = {}
@@ -144,14 +146,14 @@ class BundleBuilder:
 		cmd += sources
 		print(cmd)
 
-		subprocess.call(cmd, env=BundleBuilder.__build_env)
+		subprocess.check_call(cmd, env=BundleBuilder.__build_env)
 
 		for srcdir in sources:
 			property_files = BundleBuilder.__collect_property_files(srcdir)
 			if property_files:
 				cmd = [ 'jar', 'uf', jar_path ] + property_files
 				print(cmd)
-				subprocess.call(cmd, cwd=srcdir)
+				subprocess.check_call(cmd, cwd=srcdir)
 
 		self.__cleanClasspath(jar_path)
 
@@ -176,7 +178,7 @@ class BundleBuilder:
 			+ includes
 
 		print(cmd)
-		subprocess.call(cmd, cwd=include_base_dir)
+		subprocess.check_call(cmd, cwd=include_base_dir)
 
 	def __copyIncludes(self, destination, includes, include_base_dir):
 		if not os.path.isdir(destination):
@@ -196,7 +198,7 @@ class BundleBuilder:
 		os.write(fd, 'Class-Path: \n')
 		os.close(fd)
 
-		subprocess.call(['jar', 'ufm', jar_path, manifest])
+		subprocess.check_call(['jar', 'ufm', jar_path, manifest])
 		os.remove(manifest)
 
 	@staticmethod
