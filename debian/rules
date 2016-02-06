@@ -33,6 +33,4 @@ override_dh_clean:
 
 VERSION=$(shell dpkg-parsechangelog -S Version | cut -d- -f1)
 get-orig-source:
-	uscan --force-download --download-version $(VERSION) \
-		--rename --destdir=$(CURDIR) \
-		--repack --compression xz
+	uscan --force-download --download-version $(VERSION)
