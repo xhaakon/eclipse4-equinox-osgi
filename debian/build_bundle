@@ -174,7 +174,10 @@ class BundleBuilder:
 		return result;
 
 	def __addIncludes(self, jar_path, includes, include_base_dir):
-		cmd = [ 'jar', 'ufm', os.path.abspath(jar_path), 'META-INF/MANIFEST.MF' ] \
+		jar = os.path.abspath(jar_path)
+		action = '{0}fm'.format('u' if os.path.exists(jar) else 'c')
+
+		cmd = [ 'jar', action, jar, 'META-INF/MANIFEST.MF' ] \
 			+ includes
 
 		print(cmd)
