@@ -53,6 +53,8 @@ Package: eclipse4-build-helper
 Architecture: all
 Depends:
  python:any,
+ default-jdk,
+ javahelper,
  ${misc:Depends},
  ${shlibs:Depends}
 Description: Equinox blah
