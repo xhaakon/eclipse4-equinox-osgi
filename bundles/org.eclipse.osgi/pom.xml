@@ -14,12 +14,12 @@
   <parent>
     <artifactId>rt.equinox.framework</artifactId>
     <groupId>org.eclipse.equinox.framework</groupId>
-    <version>4.5.1-SNAPSHOT</version>
+    <version>4.5.2-SNAPSHOT</version>
     <relativePath>../../</relativePath>
   </parent>
   <groupId>org.eclipse.osgi</groupId>
   <artifactId>org.eclipse.osgi</artifactId>
-  <version>3.10.101-SNAPSHOT</version>
+  <version>3.10.102-SNAPSHOT</version>
   <packaging>eclipse-plugin</packaging>
 
   <build>
