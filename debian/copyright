@@ -3,6 +3,7 @@ Upstream-Name: Equinox OSGi
 Source: http://git.eclipse.org/c/equinox/rt.equinox.framework.git
 Files-Excluded: bundles/org.eclipse.osgi/osgi/*.jar
  bundles/org.eclipse.osgi.tests/*
+ bundles/org.eclipse.osgi.services/lib/osgi.annotation.jar
  bundles/org.eclipse.equinox.launcher.*
  launcher-binary-parent/*
  releng/*
