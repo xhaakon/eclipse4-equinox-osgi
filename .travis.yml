@@ -3,8 +3,13 @@ sudo: required
 services:
   - docker
 
+before_install:
+  - gem install package_cloud
+
 script:
   - wget -O- http://travis.debian.net/script.sh | sh -
+  - package_cloud push xhaakon/eclipse4/debian/stretch ../*.dsc
+  - package_cloud push xhaakon/eclipse4/debian/stretch ../*.deb
 
 branches:
   except:
