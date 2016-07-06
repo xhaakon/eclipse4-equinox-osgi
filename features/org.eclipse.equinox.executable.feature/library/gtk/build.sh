@@ -125,6 +125,16 @@ case $defaultOS in
 				defaultJava=DEFAULT_JAVA_EXEC
 				OUTPUT_DIR="$EXEC_DIR/bin/$defaultWS/$defaultOS/$defaultOSArch"
 				;;
+                        "arm*")
+				defaultOSArch="arm"
+				defaultJava=DEFAULT_JAVA_EXEC
+				OUTPUT_DIR="$EXEC_DIR/bin/$defaultWS/$defaultOS/$defaultOSArch"
+				;;
+                        "aarch64")
+				defaultOSArch="aarch64"
+				defaultJava=DEFAULT_JAVA_EXEC
+				OUTPUT_DIR="$EXEC_DIR/bin/$defaultWS/$defaultOS/$defaultOSArch"
+				;;
 			*)
 				echo "*** Unknown MODEL <${MODEL}>"
 				;;
@@ -166,13 +176,23 @@ case $defaultOS in
 		fi
 		case ${PROC} in
 			"i386" | "x86")
-				defaultOSArch="x86"
-				[ -d /bluebird/teamswt/swt-builddir/build/JRE/Solaris_x86/jdk1.6.0_14 ] && defaultJavaHome="/bluebird/teamswt/swt-builddir/build/JRE/Solaris_x86/jdk1.6.0_14"
+				if [ "`isainfo -k`" = "amd64" ]; then
+					defaultOSArch="x86_64"
+					[ -d /bluebird/teamswt/swt-builddir/build/JRE/Solaris_x64/jdk1.8.0_71 ] && defaultJavaHome="/bluebird/teamswt/swt-builddir/build/JRE/Solaris_x64/jdk1.8.0_71"
+				else
+					defaultOSArch="x86"
+					[ -d /bluebird/teamswt/swt-builddir/build/JRE/Solaris_x86/jdk1.6.0_14 ] && defaultJavaHome="/bluebird/teamswt/swt-builddir/build/JRE/Solaris_x86/jdk1.6.0_14"
+				fi
 				CC=cc
 				;;
 			"sparc")
-				defaultOSArch="sparc"
-				[ -d /bluebird/teamswt/swt-builddir/build/JRE/SPARC/jdk1.6.0_14 ] && defaultJavaHome="/bluebird/teamswt/swt-builddir/build/JRE/SPARC/jdk1.6.0_14"
+				if [ "`isainfo -k`" = "sparcv9" ]; then
+					defaultOSArch="sparcv9"
+					[ -d /bluebird/teamswt/swt-builddir/JDKs/SOLARIS/SPARC64/jdk1.5.0_22 ] && defaultJavaHome="/bluebird/teamswt/swt-builddir/JDKs/SOLARIS/SPARC64/jdk1.5.0_22"
+				else
+					defaultOSArch="sparc"
+					[ -d /bluebird/teamswt/swt-builddir/build/JRE/SPARC/jdk1.6.0_14 ] && defaultJavaHome="/bluebird/teamswt/swt-builddir/build/JRE/SPARC/jdk1.6.0_14"
+				fi
 				CC=cc
 				;;
 			*)
@@ -223,6 +243,14 @@ elif [ "$defaultOSArch" = "s390x" ];  then
 elif [ "$defaultOSArch" = "ia64" ];  then
 	M_ARCH=-mlp64
 	export M_ARCH
+elif [ "$defaultOSArch" = "x86" ];  then
+	M_ARCH=-m32
+	export M_ARCH
+elif [ "$defaultOS" = "solaris" ];  then
+	if [ "$defaultOSArch" = "x86_64" -o "$defaultOSArch" = "sparcv9" ]; then
+		M_ARCH=-m64
+		export M_ARCH
+	fi
 fi
 
 LIBRARY_DIR="$EXEC_DIR/../org.eclipse.equinox.launcher.$defaultWS.$defaultOS.$defaultOSArch"

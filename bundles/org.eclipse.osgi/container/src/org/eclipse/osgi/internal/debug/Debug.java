@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2003, 2014 IBM Corporation and others.
+ * Copyright (c) 2003, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -39,6 +39,10 @@ public class Debug implements DebugOptionsListener {
 	 * Loader Debug option key.
 	 */
 	public static final String OPTION_DEBUG_LOADER = ECLIPSE_OSGI + "/debug/loader"; //$NON-NLS-1$
+	/**
+	 * Storage Debug option key.
+	 */
+	public static final String OPTION_DEBUG_STORAGE = ECLIPSE_OSGI + "/debug/storage"; //$NON-NLS-1$
 	/**
 	 * Events Debug option key.
 	 */
@@ -93,6 +97,8 @@ public class Debug implements DebugOptionsListener {
 
 	public static final String OPTION_CACHED_MANIFEST = ECLIPSE_OSGI + "/debug/cachedmanifest"; //$NON-NLS-1$
 
+	public static final String OPTION_DEBUG_SYSTEM_BUNDLE = ECLIPSE_OSGI + "/debug/systemBundle"; //$NON-NLS-1$
+
 	/**
 	 * General debug flag.
 	 */
@@ -105,6 +111,10 @@ public class Debug implements DebugOptionsListener {
 	 * Loader debug flag.
 	 */
 	public boolean DEBUG_LOADER = false; // "debug.loader"
+	/**
+	 * Storage debug flag.
+	 */
+	public boolean DEBUG_STORAGE = false; // "debug.storage"
 	/**
 	 * Events debug flag.
 	 */
@@ -156,6 +166,8 @@ public class Debug implements DebugOptionsListener {
 
 	public boolean DEBUG_CACHED_MANIFEST = false;
 
+	public boolean DEBUG_SYSTEM_BUNDLE = false; // debug/systemBundle
+
 	public Debug(DebugOptions dbgOptions) {
 		optionsChanged(dbgOptions);
 	}
@@ -165,6 +177,7 @@ public class Debug implements DebugOptionsListener {
 		DEBUG_GENERAL = dbgOptions.getBooleanOption(OPTION_DEBUG_GENERAL, false);
 		DEBUG_BUNDLE_TIME = dbgOptions.getBooleanOption(OPTION_DEBUG_BUNDLE_TIME, false) || dbgOptions.getBooleanOption("org.eclipse.core.runtime/timing/startup", false); //$NON-NLS-1$
 		DEBUG_LOADER = dbgOptions.getBooleanOption(OPTION_DEBUG_LOADER, false);
+		DEBUG_STORAGE = dbgOptions.getBooleanOption(OPTION_DEBUG_STORAGE, false);
 		DEBUG_EVENTS = dbgOptions.getBooleanOption(OPTION_DEBUG_EVENTS, false);
 		DEBUG_SERVICES = dbgOptions.getBooleanOption(OPTION_DEBUG_SERVICES, false);
 		DEBUG_HOOKS = dbgOptions.getBooleanOption(OPTION_DEBUG_HOOKS, false);
@@ -180,6 +193,7 @@ public class Debug implements DebugOptionsListener {
 		MONITOR_ACTIVATION = dbgOptions.getBooleanOption(OPTION_MONITOR_ACTIVATION, false);
 		DEBUG_LOCATION = dbgOptions.getBooleanOption(OPTION_DEBUG_LOCATION, false);
 		DEBUG_CACHED_MANIFEST = dbgOptions.getBooleanOption(OPTION_CACHED_MANIFEST, false);
+		DEBUG_SYSTEM_BUNDLE = dbgOptions.getBooleanOption(OPTION_DEBUG_SYSTEM_BUNDLE, false);
 	}
 
 	/**

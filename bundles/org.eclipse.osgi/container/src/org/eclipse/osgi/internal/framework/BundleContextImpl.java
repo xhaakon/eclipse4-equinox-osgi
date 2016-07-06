@@ -702,7 +702,12 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 	 *            method failed
 	 */
 	protected void start() throws BundleException {
+		long start = 0;
 		try {
+			if (debug.DEBUG_BUNDLE_TIME) {
+				start = System.currentTimeMillis();
+				Debug.println("Finding activator for " + bundle); //$NON-NLS-1$
+			}
 			activator = loadBundleActivator();
 		} catch (Exception e) {
 			if (e instanceof RuntimeException) {
@@ -712,9 +717,7 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 		}
 
 		if (activator != null) {
-			long start = 0;
 			if (debug.DEBUG_BUNDLE_TIME) {
-				start = System.currentTimeMillis();
 				Debug.println("Starting " + bundle); //$NON-NLS-1$
 			}
 			try {
@@ -883,12 +886,10 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 	 * @param object Event object
 	 */
 	public void dispatchEvent(Object originalListener, Object l, int action, Object object) {
-		// save the bundle ref to a local variable 
-		// to avoid interference from another thread closing this context
-		EquinoxBundle tmpBundle = bundle;
 		Object previousTCCL = setContextFinder();
 		try {
-			if (isValid()) /* if context still valid */{
+			// if context still valid or the system bundle
+			if (isValid() || bundle.getBundleId() == 0) {
 				switch (action) {
 					case EquinoxEventPublisher.BUNDLEEVENT :
 					case EquinoxEventPublisher.BUNDLEEVENTSYNC : {
@@ -896,7 +897,7 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 
 						if (debug.DEBUG_EVENTS) {
 							String listenerName = listener.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(listener)); //$NON-NLS-1$
-							Debug.println("dispatchBundleEvent[" + tmpBundle + "](" + listenerName + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+							Debug.println("dispatchBundleEvent[" + bundle + "](" + listenerName + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 						}
 
 						listener.bundleChanged((BundleEvent) object);
@@ -909,7 +910,7 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 						ServiceListener listener = (ServiceListener) l;
 						if (debug.DEBUG_EVENTS) {
 							String listenerName = listener.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(listener)); //$NON-NLS-1$
-							Debug.println("dispatchServiceEvent[" + tmpBundle + "](" + listenerName + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+							Debug.println("dispatchServiceEvent[" + bundle + "](" + listenerName + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 						}
 						listener.serviceChanged(event);
 						break;
@@ -920,7 +921,7 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 
 						if (debug.DEBUG_EVENTS) {
 							String listenerName = listener.getClass().getName() + "@" + Integer.toHexString(System.identityHashCode(listener)); //$NON-NLS-1$
-							Debug.println("dispatchFrameworkEvent[" + tmpBundle + "](" + listenerName + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+							Debug.println("dispatchFrameworkEvent[" + bundle + "](" + listenerName + ")"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
 						}
 
 						listener.frameworkEvent((FrameworkEvent) object);
@@ -946,7 +947,7 @@ public class BundleContextImpl implements BundleContext, EventDispatcher<Object,
 					}
 				}
 
-				container.getEventPublisher().publishFrameworkEvent(FrameworkEvent.ERROR, tmpBundle, t);
+				container.getEventPublisher().publishFrameworkEvent(FrameworkEvent.ERROR, bundle, t);
 			}
 		} finally {
 			if (previousTCCL != Boolean.FALSE)

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2014 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -31,7 +31,7 @@ public abstract class SystemModule extends Module {
 	private final Map<Thread, ContainerEvent> forStop = new HashMap<Thread, ContainerEvent>(2);
 
 	public SystemModule(ModuleContainer container) {
-		super(new Long(0), Constants.SYSTEM_BUNDLE_LOCATION, container, EnumSet.of(Settings.AUTO_START, Settings.USE_ACTIVATION_POLICY), new Integer(0));
+		super(new Long(0), Constants.SYSTEM_BUNDLE_LOCATION, container, EnumSet.of(Settings.AUTO_START, Settings.USE_ACTIVATION_POLICY), Integer.valueOf(0));
 	}
 
 	/**
@@ -40,11 +40,15 @@ public abstract class SystemModule extends Module {
 	 */
 	public final void init() throws BundleException {
 		getRevisions().getContainer().checkAdminPermission(getBundle(), AdminPermission.EXECUTE);
+
 		boolean lockedStarted = false;
-		lockStateChange(ModuleEvent.STARTED);
+		// Indicate we are in the middle of a start.
+		// This must be incremented before we acquire the STARTED lock the first time.
+		inStart.incrementAndGet();
 		try {
-			getContainer().getAdaptor().initBegin();
+			lockStateChange(ModuleEvent.STARTED);
 			lockedStarted = true;
+			getContainer().getAdaptor().initBegin();
 			checkValid();
 			if (ACTIVE_SET.contains(getState()))
 				return;
@@ -97,6 +101,7 @@ public abstract class SystemModule extends Module {
 			if (lockedStarted) {
 				unlockStateChange(ModuleEvent.STARTED);
 			}
+			inStart.decrementAndGet();
 		}
 	}
 

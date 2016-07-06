@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2014 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -11,23 +11,21 @@
 package org.eclipse.osgi.container;
 
 import java.io.*;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.locks.*;
+import java.util.concurrent.locks.ReentrantReadWriteLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock.ReadLock;
 import java.util.concurrent.locks.ReentrantReadWriteLock.WriteLock;
 import org.eclipse.osgi.container.Module.Settings;
 import org.eclipse.osgi.container.Module.State;
+import org.eclipse.osgi.container.ModuleContainerAdaptor.ContainerEvent;
 import org.eclipse.osgi.container.ModuleRevisionBuilder.GenericInfo;
 import org.eclipse.osgi.container.namespaces.EquinoxModuleDataNamespace;
 import org.eclipse.osgi.framework.util.ObjectPool;
 import org.eclipse.osgi.internal.container.Capabilities;
 import org.eclipse.osgi.internal.container.ComputeNodeOrder;
 import org.eclipse.osgi.internal.framework.EquinoxConfiguration;
-import org.osgi.framework.Constants;
-import org.osgi.framework.Version;
+import org.osgi.framework.*;
 import org.osgi.framework.namespace.PackageNamespace;
 import org.osgi.framework.wiring.BundleRevision;
 import org.osgi.resource.*;
@@ -926,20 +924,21 @@ public class ModuleDatabase {
 	}
 
 	private static class Persistence {
-		private static final int VERSION = 1;
+		private static final int VERSION = 2;
 		private static final byte NULL = 0;
 		private static final byte OBJECT = 1;
+		private static final byte INDEX = 2;
 		private static final byte LONG_STRING = 3;
 		private static final String UTF_8 = "UTF-8"; //$NON-NLS-1$
 
 		private static final byte VALUE_STRING = 0;
-		private static final byte VALUE_STRING_ARRAY = 1;
-		private static final byte VAlUE_BOOLEAN = 2;
-		private static final byte VALUE_INTEGER = 3;
+		// REMOVED treated as List<String> - private static final byte VALUE_STRING_ARRAY = 1;
+		// REMOVED never was really supported by the OSGi builder - private static final byte VAlUE_BOOLEAN = 2;
+		// REMOVED never was really supported by the OSGi builder - private static final byte VALUE_INTEGER = 3;
 		private static final byte VALUE_LONG = 4;
 		private static final byte VALUE_DOUBLE = 5;
 		private static final byte VALUE_VERSION = 6;
-		private static final byte VALUE_URI = 7;
+		// REMOVED treated as type String - private static final byte VALUE_URI = 7;
 		private static final byte VALUE_LIST = 8;
 
 		private static int addToWriteTable(Object object, Map<Object, Integer> objectTable) {
@@ -948,13 +947,13 @@ public class ModuleDatabase {
 			Integer cur = objectTable.get(object);
 			if (cur != null)
 				throw new IllegalStateException("Object is already in the write table: " + object); //$NON-NLS-1$
-			objectTable.put(object, new Integer(objectTable.size()));
+			objectTable.put(object, Integer.valueOf(objectTable.size()));
 			// return the index of the object just added (i.e. size - 1)
 			return (objectTable.size() - 1);
 		}
 
 		private static void addToReadTable(Object object, int index, Map<Integer, Object> objectTable) {
-			objectTable.put(new Integer(index), object);
+			objectTable.put(Integer.valueOf(index), object);
 		}
 
 		public static void store(ModuleDatabase moduleDatabase, DataOutputStream out, boolean persistWirings) throws IOException {
@@ -964,10 +963,48 @@ public class ModuleDatabase {
 			out.writeLong(moduleDatabase.getNextId());
 			out.writeInt(moduleDatabase.getInitialModuleStartLevel());
 
-			List<Module> modules = moduleDatabase.getModules();
-			out.writeInt(modules.size());
+			// prime the object table with all the strings, versions and maps
+			Set<String> allStrings = new HashSet<String>();
+			Set<Version> allVersions = new HashSet<Version>();
+			Set<Map<String, ?>> allMaps = new HashSet<Map<String, ?>>();
 
+			// first gather all the strings, versions and maps from the modules
+			List<Module> modules = moduleDatabase.getModules();
+			for (Module module : modules) {
+				getStringsVersionsAndMaps(module, moduleDatabase, allStrings, allVersions, allMaps);
+			}
+			// outside of the modules the wirings have 'substituted' packages strings
+			Map<ModuleRevision, ModuleWiring> wirings = moduleDatabase.wirings;
+			for (ModuleWiring wiring : wirings.values()) {
+				Collection<String> substituted = wiring.getSubstitutedNames();
+				for (String pkgName : substituted) {
+					allStrings.add(pkgName);
+				}
+			}
+
+			// Now persist all the Strings
 			Map<Object, Integer> objectTable = new HashMap<Object, Integer>();
+			allStrings.remove(null);
+			out.writeInt(allStrings.size());
+			for (String string : allStrings) {
+				writeString(string, out, objectTable);
+				out.writeInt(addToWriteTable(string, objectTable));
+			}
+			// Followed by versions which may reference strings with their qualifier
+			out.writeInt(allVersions.size());
+			for (Version version : allVersions) {
+				writeVersion(version, out, objectTable);
+				out.writeInt(addToWriteTable(version, objectTable));
+			}
+			// Followed by maps which may reference the strings and versions
+			out.writeInt(allMaps.size());
+			for (Map<String, ?> map : allMaps) {
+				writeMap(map, out, objectTable, moduleDatabase);
+				out.writeInt(addToWriteTable(map, objectTable));
+			}
+
+			// Followed by modules which reference the strings, versions, and maps
+			out.writeInt(modules.size());
 			for (Module module : modules) {
 				writeModule(module, moduleDatabase, out, objectTable);
 			}
@@ -980,8 +1017,7 @@ public class ModuleDatabase {
 				return;
 			}
 
-			Map<ModuleRevision, ModuleWiring> wirings = moduleDatabase.wirings;
-			// prime the object table with all the required wires
+			// prime the object table with all the required wires which reference the modules
 			out.writeInt(wirings.size());
 			for (ModuleWiring wiring : wirings.values()) {
 				List<ModuleWire> requiredWires = wiring.getPersistentRequiredWires();
@@ -991,12 +1027,74 @@ public class ModuleDatabase {
 				}
 			}
 
-			// now write all the info about each wiring using only indexes
+			// now write all the info about each wiring using only indexes from the objectTable
 			for (ModuleWiring wiring : wirings.values()) {
 				writeWiring(wiring, out, objectTable);
 			}
 
 			out.flush();
+		}
+
+		private static void getStringsVersionsAndMaps(Module module, ModuleDatabase moduleDatabase, Set<String> allStrings, Set<Version> allVersions, Set<Map<String, ?>> allMaps) {
+			ModuleRevision current = module.getCurrentRevision();
+			if (current == null)
+				return;
+
+			allStrings.add(module.getLocation());
+			allStrings.add(current.getSymbolicName());
+			allStrings.add(current.getVersion().getQualifier());
+			allVersions.add(current.getVersion());
+			EnumSet<Settings> settings = moduleDatabase.moduleSettings.get(module.getId());
+			if (settings != null) {
+				for (Settings setting : settings) {
+					allStrings.add(setting.toString());
+				}
+			}
+
+			List<ModuleCapability> capabilities = current.getModuleCapabilities(null);
+			for (ModuleCapability capability : capabilities) {
+				allStrings.add(capability.getNamespace());
+				addMap(capability.getPersistentAttributes(), allStrings, allVersions, allMaps);
+				addMap(capability.getDirectives(), allStrings, allVersions, allMaps);
+			}
+
+			List<ModuleRequirement> requirements = current.getModuleRequirements(null);
+			for (ModuleRequirement requirement : requirements) {
+				allStrings.add(requirement.getNamespace());
+				addMap(requirement.getAttributes(), allStrings, allVersions, allMaps);
+				addMap(requirement.getDirectives(), allStrings, allVersions, allMaps);
+			}
+		}
+
+		private static void addMap(Map<String, ?> map, Set<String> allStrings, Set<Version> allVersions, Set<Map<String, ?>> allMaps) {
+			if (!allMaps.add(map)) {
+				// map was already added
+				return;
+			}
+			for (Map.Entry<String, ?> entry : map.entrySet()) {
+				allStrings.add(entry.getKey());
+				Object value = entry.getValue();
+				if (value instanceof String) {
+					allStrings.add((String) value);
+				} else if (value instanceof Version) {
+					allStrings.add(((Version) value).getQualifier());
+					allVersions.add((Version) value);
+				} else if (value instanceof List) {
+					switch (getListType((List<?>) value)) {
+						case VALUE_STRING :
+							for (Object string : (List<?>) value) {
+								allStrings.add((String) string);
+							}
+							break;
+						case VALUE_VERSION :
+							for (Object version : (List<?>) value) {
+								allStrings.add(((Version) version).getQualifier());
+								allVersions.add((Version) version);
+							}
+							break;
+					}
+				}
+			}
 		}
 
 		public static void load(ModuleDatabase moduleDatabase, DataInputStream in) throws IOException {
@@ -1008,11 +1106,24 @@ public class ModuleDatabase {
 			moduleDatabase.nextId.set(in.readLong());
 			moduleDatabase.setInitialModuleStartLevel(in.readInt());
 
-			int numModules = in.readInt();
-
 			Map<Integer, Object> objectTable = new HashMap<Integer, Object>();
+			if (version >= 2) {
+				int numStrings = in.readInt();
+				for (int i = 0; i < numStrings; i++) {
+					readIndexedString(in, objectTable);
+				}
+				int numVersions = in.readInt();
+				for (int i = 0; i < numVersions; i++) {
+					readIndexedVersion(in, objectTable);
+				}
+				int numMaps = in.readInt();
+				for (int i = 0; i < numMaps; i++) {
+					readIndexedMap(in, objectTable);
+				}
+			}
+			int numModules = in.readInt();
 			for (int i = 0; i < numModules; i++) {
-				readModule(moduleDatabase, in, objectTable);
+				readModule(moduleDatabase, in, objectTable, version);
 			}
 
 			moduleDatabase.revisionsTimeStamp.set(revisionsTimeStamp);
@@ -1054,25 +1165,25 @@ public class ModuleDatabase {
 				return;
 			out.writeInt(addToWriteTable(current, objectTable));
 
-			writeString(module.getLocation(), out);
+			writeString(module.getLocation(), out, objectTable);
 			out.writeLong(module.getId());
 
-			writeString(current.getSymbolicName(), out);
-			writeVersion(current.getVersion(), out);
+			writeString(current.getSymbolicName(), out, objectTable);
+			writeVersion(current.getVersion(), out, objectTable);
 			out.writeInt(current.getTypes());
 
 			List<ModuleCapability> capabilities = current.getModuleCapabilities(null);
 			out.writeInt(capabilities.size());
 			for (ModuleCapability capability : capabilities) {
 				out.writeInt(addToWriteTable(capability, objectTable));
-				writeGenericInfo(capability.getNamespace(), capability.getPersistentAttributes(), capability.getDirectives(), out);
+				writeGenericInfo(capability.getNamespace(), capability.getPersistentAttributes(), capability.getDirectives(), out, objectTable);
 			}
 
 			List<Requirement> requirements = current.getRequirements(null);
 			out.writeInt(requirements.size());
 			for (Requirement requirement : requirements) {
 				out.writeInt(addToWriteTable(requirement, objectTable));
-				writeGenericInfo(requirement.getNamespace(), requirement.getAttributes(), requirement.getDirectives(), out);
+				writeGenericInfo(requirement.getNamespace(), requirement.getAttributes(), requirement.getDirectives(), out, objectTable);
 			}
 
 			// settings
@@ -1080,7 +1191,7 @@ public class ModuleDatabase {
 			out.writeInt(settings == null ? 0 : settings.size());
 			if (settings != null) {
 				for (Settings setting : settings) {
-					writeString(setting.name(), out);
+					writeString(setting.name(), out, objectTable);
 				}
 			}
 
@@ -1091,27 +1202,27 @@ public class ModuleDatabase {
 			out.writeLong(module.getLastModified());
 		}
 
-		private static void readModule(ModuleDatabase moduleDatabase, DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+		private static void readModule(ModuleDatabase moduleDatabase, DataInputStream in, Map<Integer, Object> objectTable, int version) throws IOException {
 			ModuleRevisionBuilder builder = new ModuleRevisionBuilder();
 			int moduleIndex = in.readInt();
-			String location = readString(in);
+			String location = readString(in, objectTable);
 			long id = in.readLong();
-			builder.setSymbolicName(readString(in));
-			builder.setVersion(readVersion(in));
+			builder.setSymbolicName(readString(in, objectTable));
+			builder.setVersion(readVersion(in, objectTable));
 			builder.setTypes(in.readInt());
 
 			int numCapabilities = in.readInt();
 			int[] capabilityIndexes = new int[numCapabilities];
 			for (int i = 0; i < numCapabilities; i++) {
 				capabilityIndexes[i] = in.readInt();
-				readGenericInfo(true, in, builder);
+				readGenericInfo(true, in, builder, objectTable, version);
 			}
 
 			int numRequirements = in.readInt();
 			int[] requirementIndexes = new int[numRequirements];
 			for (int i = 0; i < numRequirements; i++) {
 				requirementIndexes[i] = in.readInt();
-				readGenericInfo(false, in, builder);
+				readGenericInfo(false, in, builder, objectTable, version);
 			}
 
 			// settings
@@ -1120,7 +1231,7 @@ public class ModuleDatabase {
 			if (numSettings > 0) {
 				settings = EnumSet.noneOf(Settings.class);
 				for (int i = 0; i < numSettings; i++) {
-					settings.add(Settings.valueOf(readString(in)));
+					settings.add(Settings.valueOf(readString(in, objectTable)));
 				}
 			}
 
@@ -1225,7 +1336,7 @@ public class ModuleDatabase {
 			Collection<String> substituted = wiring.getSubstitutedNames();
 			out.writeInt(substituted.size());
 			for (String pkgName : substituted) {
-				writeString(pkgName, out);
+				writeString(pkgName, out, objectTable);
 			}
 		}
 
@@ -1261,32 +1372,39 @@ public class ModuleDatabase {
 			int numSubstitutedNames = in.readInt();
 			Collection<String> substituted = new ArrayList<String>(numSubstitutedNames);
 			for (int i = 0; i < numSubstitutedNames; i++) {
-				substituted.add(readString(in));
+				substituted.add(readString(in, objectTable));
 			}
 
 			return new ModuleWiring(revision, capabilities, requirements, providedWires, requiredWires, substituted);
 		}
 
-		private static void writeGenericInfo(String namespace, Map<String, ?> attributes, Map<String, String> directives, DataOutputStream out) throws IOException {
-			writeString(namespace, out);
-			writeMap(attributes, out);
-			writeMap(directives, out);
+		private static void writeGenericInfo(String namespace, Map<String, ?> attributes, Map<String, String> directives, DataOutputStream out, Map<Object, Integer> objectTable) throws IOException {
+			writeString(namespace, out, objectTable);
+
+			Integer attributesIndex = objectTable.get(attributes);
+			Integer directivesIndex = objectTable.get(directives);
+			if (attributesIndex == null || directivesIndex == null)
+				throw new NullPointerException("Could not find the expected indexes"); //$NON-NLS-1$
+			out.writeInt(attributesIndex);
+			out.writeInt(directivesIndex);
 		}
 
 		@SuppressWarnings("unchecked")
-		private static void readGenericInfo(boolean isCapability, DataInputStream in, ModuleRevisionBuilder builder) throws IOException {
-			String namespace = readString(in);
-			Map<String, Object> attributes = readMap(in);
-			Map<String, ?> directives = readMap(in);
+		private static void readGenericInfo(boolean isCapability, DataInputStream in, ModuleRevisionBuilder builder, Map<Integer, Object> objectTable, int version) throws IOException {
+			String namespace = readString(in, objectTable);
+			Map<String, Object> attributes = version >= 2 ? (Map<String, Object>) objectTable.get(in.readInt()) : readMap(in, objectTable);
+			Map<String, ?> directives = version >= 2 ? (Map<String, ?>) objectTable.get(in.readInt()) : readMap(in, objectTable);
+			if (attributes == null || directives == null)
+				throw new NullPointerException("Could not find the expected indexes"); //$NON-NLS-1$
 			if (isCapability) {
-				builder.addCapability(namespace, (Map<String, String>) directives, attributes);
+				builder.basicAddCapability(namespace, (Map<String, String>) directives, attributes);
 			} else {
-				builder.addRequirement(namespace, (Map<String, String>) directives, attributes);
+				builder.basicAddRequirement(namespace, (Map<String, String>) directives, attributes);
 			}
 
 		}
 
-		private static void writeMap(Map<String, ?> source, DataOutputStream out) throws IOException {
+		private static void writeMap(Map<String, ?> source, DataOutputStream out, Map<Object, Integer> objectTable, ModuleDatabase moduleDatabase) throws IOException {
 			if (source == null) {
 				out.writeInt(0);
 			} else {
@@ -1295,19 +1413,10 @@ public class ModuleDatabase {
 				while (iter.hasNext()) {
 					String key = iter.next();
 					Object value = source.get(key);
-					writeString(key, out);
+					writeString(key, out, objectTable);
 					if (value instanceof String) {
 						out.writeByte(VALUE_STRING);
-						writeString((String) value, out);
-					} else if (value instanceof String[]) {
-						out.writeByte(VALUE_STRING_ARRAY);
-						writeStringArray(out, (String[]) value);
-					} else if (value instanceof Boolean) {
-						out.writeByte(VAlUE_BOOLEAN);
-						out.writeBoolean(((Boolean) value).booleanValue());
-					} else if (value instanceof Integer) {
-						out.writeByte(VALUE_INTEGER);
-						out.writeInt(((Integer) value).intValue());
+						writeString((String) value, out, objectTable);
 					} else if (value instanceof Long) {
 						out.writeByte(VALUE_LONG);
 						out.writeLong(((Long) value).longValue());
@@ -1316,93 +1425,82 @@ public class ModuleDatabase {
 						out.writeDouble(((Double) value).doubleValue());
 					} else if (value instanceof Version) {
 						out.writeByte(VALUE_VERSION);
-						writeVersion((Version) value, out);
-					} else if (value instanceof URI) {
-						out.writeByte(VALUE_URI);
-						writeString(value.toString(), out);
+						writeVersion((Version) value, out, objectTable);
 					} else if (value instanceof List) {
 						out.writeByte(VALUE_LIST);
-						writeList(out, (List<?>) value);
+						writeList(out, key, (List<?>) value, objectTable, moduleDatabase);
+					} else {
+						// do our best and write a string; post an error.
+						// This will be difficult to debug because we don't know which module it is coming from, but it is better than being silent
+						moduleDatabase.adaptor.publishContainerEvent(ContainerEvent.ERROR, moduleDatabase.getModule(0), new BundleException("Invalid map value: " + key + " = " + value.getClass().getName() + '[' + value + ']')); //$NON-NLS-1$ //$NON-NLS-2$
+						out.writeByte(VALUE_STRING);
+						writeString(String.valueOf(value), out, objectTable);
 					}
 				}
 			}
 		}
 
-		private static Map<String, Object> readMap(DataInputStream in) throws IOException {
+		private static void readIndexedMap(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+			Map<String, Object> result = readMap(in, objectTable);
+			addToReadTable(result, in.readInt(), objectTable);
+		}
+
+		private static Map<String, Object> readMap(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
 			int count = in.readInt();
-			HashMap<String, Object> result = new HashMap<String, Object>(count);
-			for (int i = 0; i < count; i++) {
-				String key = readString(in);
-				Object value = null;
+			Map<String, Object> result;
+			if (count == 0) {
+				result = Collections.emptyMap();
+			} else if (count == 1) {
+				String key = readString(in, objectTable);
 				byte type = in.readByte();
-				if (type == VALUE_STRING)
-					value = readString(in);
-				else if (type == VALUE_STRING_ARRAY)
-					value = readStringArray(in);
-				else if (type == VAlUE_BOOLEAN)
-					value = in.readBoolean() ? Boolean.TRUE : Boolean.FALSE;
-				else if (type == VALUE_INTEGER)
-					value = new Integer(in.readInt());
-				else if (type == VALUE_LONG)
-					value = new Long(in.readLong());
-				else if (type == VALUE_DOUBLE)
-					value = new Double(in.readDouble());
-				else if (type == VALUE_VERSION)
-					value = readVersion(in);
-				else if (type == VALUE_URI)
-					try {
-						value = new URI(readString(in));
-					} catch (URISyntaxException e) {
-						value = null;
-					}
-				else if (type == VALUE_LIST)
-					value = readList(in);
-
-				result.put(key, value);
-			}
-			return result;
-		}
-
-		private static void writeStringArray(DataOutputStream out, String[] value) throws IOException {
-			if (value == null) {
-				out.writeInt(0);
+				Object value = readMapValue(in, type, objectTable);
+				result = Collections.singletonMap(key, value);
 			} else {
-				out.writeInt(value.length);
-				for (int i = 0; i < value.length; i++)
-					writeString(value[i], out);
+				result = new HashMap<String, Object>(count);
+				for (int i = 0; i < count; i++) {
+					String key = readString(in, objectTable);
+					byte type = in.readByte();
+					Object value = readMapValue(in, type, objectTable);
+					result.put(key, value);
+				}
+				result = Collections.unmodifiableMap(result);
 			}
-
-		}
-
-		private static String[] readStringArray(DataInputStream in) throws IOException {
-			int count = in.readInt();
-			if (count == 0)
-				return null;
-			String[] result = new String[count];
-			for (int i = 0; i < count; i++)
-				result[i] = readString(in);
 			return result;
 		}
 
-		private static void writeList(DataOutputStream out, List<?> list) throws IOException {
+		private static Object readMapValue(DataInputStream in, int type, Map<Integer, Object> objectTable) throws IOException {
+			switch (type) {
+				case VALUE_STRING :
+					return readString(in, objectTable);
+				case VALUE_LONG :
+					return new Long(in.readLong());
+				case VALUE_DOUBLE :
+					return new Double(in.readDouble());
+				case VALUE_VERSION :
+					return readVersion(in, objectTable);
+				case VALUE_LIST :
+					return readList(in, objectTable);
+				default :
+					throw new IllegalArgumentException("Invalid type: " + type); //$NON-NLS-1$
+			}
+		}
+
+		private static void writeList(DataOutputStream out, String key, List<?> list, Map<Object, Integer> objectTable, ModuleDatabase moduleDatabase) throws IOException {
 			if (list.isEmpty()) {
 				out.writeInt(0);
 				return;
 			}
 			byte type = getListType(list);
-			if (type < 0) {
+			if (type == -1) {
 				out.writeInt(0);
 				return; // don't understand the list type
 			}
 			out.writeInt(list.size());
-			out.writeByte(type);
+			out.writeByte(type == -2 ? VALUE_STRING : type);
 			for (Object value : list) {
 				switch (type) {
 					case VALUE_STRING :
-						writeString((String) value, out);
-						break;
-					case VALUE_INTEGER :
-						out.writeInt(((Integer) value).intValue());
+						writeString((String) value, out, objectTable);
 						break;
 					case VALUE_LONG :
 						out.writeLong(((Long) value).longValue());
@@ -1411,9 +1509,13 @@ public class ModuleDatabase {
 						out.writeDouble(((Double) value).doubleValue());
 						break;
 					case VALUE_VERSION :
-						writeVersion((Version) value, out);
+						writeVersion((Version) value, out, objectTable);
 						break;
 					default :
+						// do our best and write a string; post an error.
+						// This will be difficult to debug because we don't know which module it is coming from, but it is better than being silent
+						moduleDatabase.adaptor.publishContainerEvent(ContainerEvent.ERROR, moduleDatabase.getModule(0), new BundleException("Invalid list element in map: " + key + " = " + value.getClass().getName() + '[' + value + ']')); //$NON-NLS-1$ //$NON-NLS-2$
+						writeString(String.valueOf(value), out, objectTable);
 						break;
 				}
 			}
@@ -1425,8 +1527,6 @@ public class ModuleDatabase {
 			Object type = list.get(0);
 			if (type instanceof String)
 				return VALUE_STRING;
-			if (type instanceof Integer)
-				return VALUE_INTEGER;
 			if (type instanceof Long)
 				return VALUE_LONG;
 			if (type instanceof Double)
@@ -1436,67 +1536,94 @@ public class ModuleDatabase {
 			return -2;
 		}
 
-		private static List<?> readList(DataInputStream in) throws IOException {
-
+		private static List<?> readList(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
 			int size = in.readInt();
 			if (size == 0)
-				return new ArrayList<Object>(0);
+				return Collections.emptyList();
 			byte listType = in.readByte();
+			if (size == 1) {
+				return Collections.singletonList(readListValue(listType, in, objectTable));
+			}
 			List<Object> list = new ArrayList<Object>(size);
 			for (int i = 0; i < size; i++) {
-				switch (listType) {
-					case VALUE_STRING :
-						list.add(readString(in));
-						break;
-					case VALUE_INTEGER :
-						list.add(new Integer(in.readInt()));
-						break;
-					case VALUE_LONG :
-						list.add(new Long(in.readLong()));
-						break;
-					case VALUE_DOUBLE :
-						list.add(new Double(in.readDouble()));
-						break;
-					case VALUE_VERSION :
-						list.add(readVersion(in));
-						break;
-					default :
-						throw new IOException("Invalid type: " + listType); //$NON-NLS-1$
-				}
+				list.add(readListValue(listType, in, objectTable));
 			}
-			return list;
+			return Collections.unmodifiableList(list);
 		}
 
-		private static void writeVersion(Version version, DataOutputStream out) throws IOException {
+		private static Object readListValue(byte listType, DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+			switch (listType) {
+				case VALUE_STRING :
+					return readString(in, objectTable);
+				case VALUE_LONG :
+					return new Long(in.readLong());
+				case VALUE_DOUBLE :
+					return new Double(in.readDouble());
+				case VALUE_VERSION :
+					return readVersion(in, objectTable);
+				default :
+					throw new IllegalArgumentException("Invalid type: " + listType); //$NON-NLS-1$
+			}
+		}
+
+		private static void writeVersion(Version version, DataOutputStream out, Map<Object, Integer> objectTable) throws IOException {
 			if (version == null || version.equals(Version.emptyVersion)) {
 				out.writeByte(NULL);
+				return;
+			}
+			Integer index = objectTable.get(version);
+			if (index != null) {
+				out.writeByte(INDEX);
+				out.writeInt(index);
 				return;
 			}
 			out.writeByte(OBJECT);
 			out.writeInt(version.getMajor());
 			out.writeInt(version.getMinor());
 			out.writeInt(version.getMicro());
-			writeQualifier(version.getQualifier(), out);
+			writeQualifier(version.getQualifier(), out, objectTable);
 		}
 
-		private static void writeQualifier(String string, DataOutputStream out) throws IOException {
+		private static void writeQualifier(String string, DataOutputStream out, Map<Object, Integer> objectTable) throws IOException {
 			if (string != null && string.length() == 0)
 				string = null;
-			writeString(string, out);
+			writeString(string, out, objectTable);
 		}
 
-		private static Version readVersion(DataInputStream in) throws IOException {
-			byte tag = in.readByte();
-			if (tag == NULL)
+		private static Version readIndexedVersion(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+			Version version = readVersion0(in, objectTable, false);
+			addToReadTable(version, in.readInt(), objectTable);
+			return version;
+		}
+
+		private static Version readVersion(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+			return readVersion0(in, objectTable, true);
+		}
+
+		private static Version readVersion0(DataInputStream in, Map<Integer, Object> objectTable, boolean intern) throws IOException {
+			byte type = in.readByte();
+			if (type == INDEX) {
+				int index = in.readInt();
+				return (Version) objectTable.get(index);
+			}
+			if (type == NULL)
 				return Version.emptyVersion;
 			int majorComponent = in.readInt();
 			int minorComponent = in.readInt();
 			int serviceComponent = in.readInt();
-			String qualifierComponent = readString(in);
-			return (Version) ObjectPool.intern(new Version(majorComponent, minorComponent, serviceComponent, qualifierComponent));
+			String qualifierComponent = readString(in, objectTable);
+			Version version = new Version(majorComponent, minorComponent, serviceComponent, qualifierComponent);
+			return intern ? ObjectPool.intern(version) : version;
 		}
 
-		private static void writeString(String string, DataOutputStream out) throws IOException {
+		private static void writeString(String string, DataOutputStream out, Map<Object, Integer> objectTable) throws IOException {
+			Integer index = string != null ? objectTable.get(string) : null;
+			if (index != null) {
+				out.writeByte(INDEX);
+				out.writeInt(index);
+				return;
+			}
+
 			if (string == null)
 				out.writeByte(NULL);
 			else {
@@ -1513,21 +1640,36 @@ public class ModuleDatabase {
 			}
 		}
 
-		static private String readString(DataInputStream in) throws IOException {
-			byte type = in.readByte();
-			if (type == NULL)
-				return null;
+		static private String readIndexedString(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+			String string = readString0(in, objectTable, false);
+			addToReadTable(string, in.readInt(), objectTable);
+			return string;
+		}
 
+		static private String readString(DataInputStream in, Map<Integer, Object> objectTable) throws IOException {
+			return readString0(in, objectTable, true);
+		}
+
+		static private String readString0(DataInputStream in, Map<Integer, Object> objectTable, boolean intern) throws IOException {
+			byte type = in.readByte();
+			if (type == INDEX) {
+				int index = in.readInt();
+				return (String) objectTable.get(index);
+			}
+			if (type == NULL) {
+				return null;
+			}
+			String string;
 			if (type == LONG_STRING) {
 				int length = in.readInt();
 				byte[] data = new byte[length];
 				in.readFully(data);
-				String string = new String(data, UTF_8);
-
-				return (String) ObjectPool.intern(string);
+				string = new String(data, UTF_8);
+			} else {
+				string = in.readUTF();
 			}
 
-			return (String) ObjectPool.intern(in.readUTF());
+			return intern ? ObjectPool.intern(string) : string;
 		}
 	}
 }

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2015 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -72,7 +72,7 @@ public class Storage {
 	private final File parentRoot;
 	private final PermissionData permissionData;
 	private final SecurityAdmin securityAdmin;
-	private final ModuleContainerAdaptor adaptor;
+	private final EquinoxContainerAdaptor adaptor;
 	private final ModuleDatabase moduleDatabase;
 	private final ModuleContainer moduleContainer;
 	private final Object saveMonitor = new Object();
@@ -185,12 +185,14 @@ public class Storage {
 		if (systemWiring == null) {
 			return;
 		}
+		Collection<ModuleRevision> fragments = new ArrayList<ModuleRevision>();
 		for (ModuleWire hostWire : systemWiring.getProvidedModuleWires(HostNamespace.HOST_NAMESPACE)) {
-			try {
-				getExtensionInstaller().addExtensionContent(hostWire.getRequirer(), null);
-			} catch (BundleException e) {
-				getLogServices().log(EquinoxContainer.NAME, FrameworkLogEntry.ERROR, e.getMessage(), e);
-			}
+			fragments.add(hostWire.getRequirer());
+		}
+		try {
+			getExtensionInstaller().addExtensionContent(fragments, null);
+		} catch (BundleException e) {
+			getLogServices().log(EquinoxContainer.NAME, FrameworkLogEntry.ERROR, e.getMessage(), e);
 		}
 	}
 
@@ -230,14 +232,15 @@ public class Storage {
 			}
 		}
 		File content = generation.getContent();
+		if (getConfiguration().inCheckConfigurationMode()) {
+			if (generation.isDirectory()) {
+				content = new File(content, "META-INF/MANIFEST.MF"); //$NON-NLS-1$
+			}
+			return generation.getLastModified() != secureAction.lastModified(content);
+		}
 		if (!content.exists()) {
 			// the content got deleted since last time!
 			return true;
-		}
-		if (getConfiguration().inCheckConfigurationMode()) {
-			if (generation.isDirectory())
-				content = new File(content, "META-INF/MANIFEST.MF"); //$NON-NLS-1$
-			return generation.getLastModified() != secureAction.lastModified(content);
 		}
 		return false;
 	}
@@ -269,7 +272,12 @@ public class Storage {
 						File contentFile = getSystemContent();
 						newGeneration.setContent(contentFile, false);
 						moduleContainer.update(systemModule, newBuilder, newGeneration);
-						moduleContainer.refresh(Arrays.asList(systemModule));
+						moduleContainer.refresh(Collections.singleton(systemModule));
+					} else {
+						if (currentRevision.getWiring() == null) {
+							// must resolve before continuing to ensure extensions get attached
+							moduleContainer.resolve(Collections.singleton(systemModule), true);
+						}
 					}
 				} catch (BundleException e) {
 					throw new IllegalStateException("Could not create a builder for the system bundle.", e); //$NON-NLS-1$
@@ -321,7 +329,14 @@ public class Storage {
 				}
 			}
 		}
+		for (ModuleRevision removalPending : moduleContainer.getRemovalPending()) {
+			Generation generation = (Generation) removalPending.getRevisionInfo();
+			if (generation != null) {
+				generation.close();
+			}
+		}
 		mruList.shutdown();
+		adaptor.shutdownResolverExecutor();
 	}
 
 	private boolean needUpdate(ModuleRevision currentRevision, ModuleRevisionBuilder newBuilder) {
@@ -359,7 +374,7 @@ public class Storage {
 	}
 
 	private void cleanOSGiStorage(Location location, File root) {
-		if (location.isReadOnly() || !StorageUtil.rm(root, getConfiguration().getDebug().DEBUG_GENERAL)) {
+		if (location.isReadOnly() || !StorageUtil.rm(root, getConfiguration().getDebug().DEBUG_STORAGE)) {
 			equinoxContainer.getLogServices().log(EquinoxContainer.NAME, FrameworkLogEntry.ERROR, "The -clean (osgi.clean) option was not successful. Unable to clean the storage area: " + root.getAbsolutePath(), null); //$NON-NLS-1$
 		}
 	}
@@ -765,7 +780,7 @@ public class Storage {
 				throw new BundleException("Could not create generation directory: " + generationRoot.getAbsolutePath()); //$NON-NLS-1$
 			}
 			contentFile = new File(generationRoot, BUNDLE_FILE_NAME);
-			if (!staged.renameTo(contentFile)) {
+			if (!StorageUtil.move(staged, contentFile, getConfiguration().getDebug().DEBUG_STORAGE)) {
 				throw new BundleException("Error while renaming bundle file to final location: " + contentFile); //$NON-NLS-1$
 			}
 		} else {
@@ -942,7 +957,7 @@ public class Storage {
 	}
 
 	private void compact(File directory) {
-		if (getConfiguration().getDebug().DEBUG_GENERAL)
+		if (getConfiguration().getDebug().DEBUG_STORAGE)
 			Debug.println("compact(" + directory.getPath() + ")"); //$NON-NLS-1$ //$NON-NLS-2$
 		String list[] = directory.list();
 		if (list == null)
@@ -960,13 +975,13 @@ public class Storage {
 			// and the directory is marked for delete
 			if (delete.exists()) {
 				// if rm fails to delete the directory and .delete was removed
-				if (!StorageUtil.rm(target, getConfiguration().getDebug().DEBUG_GENERAL) && !delete.exists()) {
+				if (!StorageUtil.rm(target, getConfiguration().getDebug().DEBUG_STORAGE) && !delete.exists()) {
 					try {
 						// recreate .delete
 						FileOutputStream out = new FileOutputStream(delete);
 						out.close();
 					} catch (IOException e) {
-						if (getConfiguration().getDebug().DEBUG_GENERAL)
+						if (getConfiguration().getDebug().DEBUG_STORAGE)
 							Debug.println("Unable to write " + delete.getPath() + ": " + e.getMessage()); //$NON-NLS-1$ //$NON-NLS-2$
 					}
 				}
@@ -996,7 +1011,7 @@ public class Storage {
 	}
 
 	void delete0(File delete) throws IOException {
-		if (!StorageUtil.rm(delete, getConfiguration().getDebug().DEBUG_GENERAL)) {
+		if (!StorageUtil.rm(delete, getConfiguration().getDebug().DEBUG_STORAGE)) {
 			/* create .delete */
 			FileOutputStream out = new FileOutputStream(new File(delete, DELETE_FLAG));
 			out.close();
@@ -1164,7 +1179,7 @@ public class Storage {
 		int numCachedHeaders = in.readInt();
 		List<String> storedCachedHeaderKeys = new ArrayList<String>(numCachedHeaders);
 		for (int i = 0; i < numCachedHeaders; i++) {
-			storedCachedHeaderKeys.add((String) ObjectPool.intern(in.readUTF()));
+			storedCachedHeaderKeys.add(ObjectPool.intern(in.readUTF()));
 		}
 
 		int numInfos = in.readInt();
@@ -1172,7 +1187,7 @@ public class Storage {
 		List<Generation> generations = new ArrayList<BundleInfo.Generation>(numInfos);
 		for (int i = 0; i < numInfos; i++) {
 			long infoId = in.readLong();
-			String infoLocation = (String) ObjectPool.intern(in.readUTF());
+			String infoLocation = ObjectPool.intern(in.readUTF());
 			long nextGenId = in.readLong();
 			long generationId = in.readLong();
 			boolean isDirectory = in.readBoolean();
@@ -1187,7 +1202,7 @@ public class Storage {
 				if (NUL.equals(value)) {
 					value = null;
 				} else {
-					value = (String) ObjectPool.intern(value);
+					value = ObjectPool.intern(value);
 				}
 				cachedHeaders.put(headerKey, value);
 			}
@@ -1481,7 +1496,9 @@ public class Storage {
 		int major = javaVersion.getMajor();
 		int minor = javaVersion.getMinor();
 		do {
-			result = findInSystemBundle(systemGeneration, javaEdition + embeddedProfileName + major + "." + minor + PROFILE_EXT); //$NON-NLS-1$
+			// If minor is zero then it is not included in the name
+			String profileResourceName = javaEdition + embeddedProfileName + major + ((minor > 0) ? "." + minor : "") + PROFILE_EXT; //$NON-NLS-1$ //$NON-NLS-2$
+			result = findInSystemBundle(systemGeneration, profileResourceName);
 			if (minor > 0) {
 				minor -= 1;
 			} else if (major > 9) {
@@ -1717,7 +1734,7 @@ public class Storage {
 		// in cases where the temp dir may already exist.
 		Long bundleID = new Long(generation.getBundleInfo().getBundleId());
 		for (int i = 0; i < Integer.MAX_VALUE; i++) {
-			bundleTempDir = new File(libTempDir, bundleID.toString() + "_" + new Integer(i).toString()); //$NON-NLS-1$
+			bundleTempDir = new File(libTempDir, bundleID.toString() + "_" + Integer.valueOf(i).toString()); //$NON-NLS-1$
 			libTempFile = new File(bundleTempDir, libName);
 			if (bundleTempDir.exists()) {
 				if (libTempFile.exists())
@@ -1767,7 +1784,7 @@ public class Storage {
 		try {
 			sManager.open(!isReadOnly());
 		} catch (IOException ex) {
-			if (getConfiguration().getDebug().DEBUG_GENERAL) {
+			if (getConfiguration().getDebug().DEBUG_STORAGE) {
 				Debug.println("Error reading framework.info: " + ex.getMessage()); //$NON-NLS-1$
 				Debug.printStackTrace(ex);
 			}
@@ -1787,7 +1804,7 @@ public class Storage {
 		try {
 			storageStream = storageManager.getInputStream(FRAMEWORK_INFO);
 		} catch (IOException ex) {
-			if (getConfiguration().getDebug().DEBUG_GENERAL) {
+			if (getConfiguration().getDebug().DEBUG_STORAGE) {
 				Debug.println("Error reading framework.info: " + ex.getMessage()); //$NON-NLS-1$
 				Debug.printStackTrace(ex);
 			}

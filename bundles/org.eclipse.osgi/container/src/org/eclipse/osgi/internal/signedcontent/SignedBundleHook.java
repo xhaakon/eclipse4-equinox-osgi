@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2006, 2013 IBM Corporation and others.
+ * Copyright (c) 2006, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -21,6 +21,7 @@ import java.security.cert.CertificateException;
 import java.util.*;
 import java.util.zip.ZipFile;
 import org.eclipse.osgi.framework.log.FrameworkLogEntry;
+import org.eclipse.osgi.framework.util.SecureAction;
 import org.eclipse.osgi.internal.framework.EquinoxBundle;
 import org.eclipse.osgi.internal.framework.EquinoxContainer;
 import org.eclipse.osgi.internal.hookregistry.*;
@@ -40,6 +41,7 @@ import org.osgi.util.tracker.ServiceTrackerCustomizer;
  * Implements signed bundle hook support for the framework
  */
 public class SignedBundleHook implements ActivatorHookFactory, BundleFileWrapperFactoryHook, HookConfigurator, SignedContentFactory {
+	static final SecureAction secureAction = AccessController.doPrivileged(SecureAction.createSecureAction());
 	static final int VERIFY_CERTIFICATE = 0x01;
 	static final int VERIFY_TRUST = 0x02;
 	static final int VERIFY_RUNTIME = 0x04;
@@ -93,7 +95,7 @@ public class SignedBundleHook implements ActivatorHookFactory, BundleFileWrapper
 			trustEngineListener = new TrustEngineListener(context, this);
 		// always register the trust engine
 		Dictionary<String, Object> trustEngineProps = new Hashtable<String, Object>(7);
-		trustEngineProps.put(Constants.SERVICE_RANKING, new Integer(Integer.MIN_VALUE));
+		trustEngineProps.put(Constants.SERVICE_RANKING, Integer.valueOf(Integer.MIN_VALUE));
 		trustEngineProps.put(SignedContentConstants.TRUST_ENGINE, SignedContentConstants.DEFAULT_TRUST_ENGINE);
 		KeyStoreTrustEngine systemTrustEngine = new KeyStoreTrustEngine(CACERTS_PATH, CACERTS_TYPE, null, "System", this); //$NON-NLS-1$
 		systemTrustEngineReg = context.registerService(TrustEngine.class.getName(), systemTrustEngine, trustEngineProps);
@@ -205,8 +207,9 @@ public class SignedBundleHook implements ActivatorHookFactory, BundleFileWrapper
 		if (content.isDirectory()) {
 			contentBundleFile = new DirBundleFile(content, false);
 		} else {
-			// make sure we have a ZipFile first, this will throw an IOException if not valid
-			ZipFile temp = new ZipFile(content);
+			// Make sure we have a ZipFile first, this will throw an IOException if not valid.
+			// Use SecureAction because it gives better errors about the path on exceptions
+			ZipFile temp = secureAction.getZipFile(content);
 			temp.close();
 			contentBundleFile = new ZipBundleFile(content, null, null, container.getConfiguration().getDebug());
 		}

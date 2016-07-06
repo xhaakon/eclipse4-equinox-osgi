@@ -78,16 +78,6 @@
 		<chmod perm="755" dir="${feature.base}/win32.win32.ia64/${collectingFolder}" includes="launcher.exe" />
 	</target>
 
-	<target name="rootFileswin32_wpf_x86">
-		<mkdir dir="${feature.base}/win32.wpf.x86/${collectingFolder}"/>
-		<copy todir="${feature.base}/win32.wpf.x86/${collectingFolder}/" failonerror="true" overwrite="true">
-			<fileset dir="${basedir}/bin/wpf/win32/x86">
-				<include name="launcher.exe"/>
-			</fileset>
-		</copy>
-		<chmod perm="755" dir="${feature.base}/win32.wpf.x86/${collectingFolder}" includes="launcher.exe" />
-	</target>
-
 	<target name="rootFilesmacosx_carbon_ppc">
 		<mkdir dir="${feature.base}/macosx.carbon.ppc/${collectingFolder}"/>
 		<copy todir="${feature.base}/macosx.carbon.ppc/${collectingFolder}" failonerror="true" overwrite="true">
@@ -160,6 +150,22 @@
 		</copy>
 		<chmod perm="755" dir="${feature.base}/linux.gtk.ppc64le/${collectingFolder}" includes="launcher" />
 	</target>
+        <target name="rootFileslinux_gtk_arm">
+		<mkdir dir="${feature.base}/linux.gtk.arm/${collectingFolder}"/>
+		<copy todir="${feature.base}/linux.gtk.arm/${collectingFolder}" failonerror="true" overwrite="true">
+			<fileset dir="${basedir}/bin/gtk/linux/arm" includes="**"			/>
+			<fileset dir="${basedir}/gtk_root" includes="**"			/>
+		</copy>
+		<chmod perm="755" dir="${feature.base}/linux.gtk.arm/${collectingFolder}" includes="launcher" />
+	</target>
+        <target name="rootFileslinux_gtk_aarch64">
+		<mkdir dir="${feature.base}/linux.gtk.aarch64/${collectingFolder}"/>
+		<copy todir="${feature.base}/linux.gtk.aarch64/${collectingFolder}" failonerror="true" overwrite="true">
+			<fileset dir="${basedir}/bin/gtk/linux/aarch64" includes="**"			/>
+			<fileset dir="${basedir}/gtk_root" includes="**"			/>
+		</copy>
+		<chmod perm="755" dir="${feature.base}/linux.gtk.aarch64/${collectingFolder}" includes="launcher" />
+	</target>
 	<target name="rootFilesaix_gtk_ppc64">
 		<mkdir dir="${feature.base}/aix.gtk.ppc64/${collectingFolder}"/>
 		<copy todir="${feature.base}/aix.gtk.ppc64/${collectingFolder}" failonerror="true" overwrite="true">
@@ -206,26 +212,26 @@
 		</copy>
 		<chmod perm="755" dir="${feature.base}/linux.gtk.s390/${collectingFolder}" includes="launcher" />
 	</target>
-	<target name="rootFilessolaris_gtk_sparc">
-		<mkdir dir="${feature.base}/solaris.gtk.sparc/${collectingFolder}"/>
-		<copy todir="${feature.base}/solaris.gtk.sparc/${collectingFolder}" failonerror="true" overwrite="true">
-			<fileset dir="${basedir}/bin/gtk/solaris/sparc" includes="**"			/>
+	<target name="rootFilessolaris_gtk_x86_64">
+		<mkdir dir="${feature.base}/solaris.gtk.x86_64/${collectingFolder}"/>
+		<copy todir="${feature.base}/solaris.gtk.x86_64/${collectingFolder}" failonerror="true" overwrite="true">
+			<fileset dir="${basedir}/bin/gtk/solaris/x86_64" includes="**"			/>
 		</copy>
-		<chmod perm="755" dir="${feature.base}/solaris.gtk.sparc/${collectingFolder}" includes="launcher" />
+		<chmod perm="755" dir="${feature.base}/solaris.gtk.x86_64/${collectingFolder}" includes="launcher" /> 
 	</target>
-	<target name="rootFilessolaris_gtk_x86">
-		<mkdir dir="${feature.base}/solaris.gtk.x86/${collectingFolder}"/>
-		<copy todir="${feature.base}/solaris.gtk.x86/${collectingFolder}" failonerror="true" overwrite="true">
-			<fileset dir="${basedir}/bin/gtk/solaris/x86" includes="**"			/>
+	<target name="rootFilessolaris_gtk_sparcv9">
+		<mkdir dir="${feature.base}/solaris.gtk.sparcv9/${collectingFolder}"/>
+		<copy todir="${feature.base}/solaris.gtk.sparcv9/${collectingFolder}" failonerror="true" overwrite="true">
+			<fileset dir="${basedir}/bin/gtk/solaris/sparcv9" includes="**"			/>
 		</copy>
-		<chmod perm="755" dir="${feature.base}/solaris.gtk.x86/${collectingFolder}" includes="launcher" />
+		<chmod perm="755" dir="${feature.base}/solaris.gtk.sparcv9/${collectingFolder}" includes="launcher" />
 	</target>
-	<target name="rootFileshpux_gtk_ia64_32">
-		<mkdir dir="${feature.base}/hpux.gtk.ia64_32/${collectingFolder}"/>
-		<copy todir="${feature.base}/hpux.gtk.ia64_32/${collectingFolder}" failonerror="true" overwrite="true">
-			<fileset dir="${basedir}/bin/gtk/hpux/ia64_32" includes="**"			/>
+	<target name="rootFileshpux_gtk_ia64">
+		<mkdir dir="${feature.base}/hpux.gtk.ia64/${collectingFolder}"/>
+		<copy todir="${feature.base}/hpux.gtk.ia64/${collectingFolder}" failonerror="true" overwrite="true">
+			<fileset dir="${basedir}/bin/gtk/hpux/ia64" includes="**"			/>
 		</copy>
-		<chmod perm="755" dir="${feature.base}/hpux.gtk.ia64_32/${collectingFolder}" includes="launcher" />
+		<chmod perm="755" dir="${feature.base}/hpux.gtk.ia64/${collectingFolder}" includes="launcher" />
 	</target>
 	<target name="rootFilesqnx_photon_x86">
 		<mkdir dir="${feature.base}/qnx.photon.x86/${collectingFolder}"/>
@@ -236,7 +242,6 @@
 	</target>
 	<target name="rootFilesgroup_group_group">
 		<antcall target="rootFileswin32_win32_x86"/>
-		<antcall target="rootFileswin32_wpf_x86"/>
 		<antcall target="rootFileswin32_win32_x86_64"/>
 		<antcall target="rootFileswin32_win32_ia64"/>
 		<antcall target="rootFilesmacosx_carbon_ppc"/>
@@ -247,14 +252,16 @@
 		<antcall target="rootFileslinux_gtk_ppc"/>
 		<antcall target="rootFileslinux_gtk_ppc64"/>
 		<antcall target="rootFileslinux_gtk_ppc64le"/>
+		<antcall target="rootFileslinux_gtk_arm"/>
+		<antcall target="rootFileslinux_gtk_aarch64"/>
 		<antcall target="rootFileslinux_gtk_x86_64"/>
 		<antcall target="rootFileslinux_gtk_ia64"/>
 		<antcall target="rootFileslinux_gtk_s390x"/>
-		<antcall target="rootFilessolaris_gtk_sparc"/>
-		<antcall target="rootFilessolaris_gtk_x86"/>
+		<antcall target="rootFilessolaris_gtk_x86_64"/>
+		<antcall target="rootFilessolaris_gtk_sparcv9"/>
 		<antcall target="rootFilesaix_gtk_ppc64"/>
 		<antcall target="rootFilesaix_gtk_ppc"/>
-		<antcall target="rootFileshpux_gtk_ia64_32"/>
+		<antcall target="rootFileshpux_gtk_ia64"/>
 		<antcall target="rootFilesqnx_photon_x86"/>
 	</target>
 

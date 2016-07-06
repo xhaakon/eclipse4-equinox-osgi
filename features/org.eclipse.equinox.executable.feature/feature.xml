@@ -2,7 +2,7 @@
 <feature
       id="org.eclipse.equinox.executable"
       label="%featureName"
-      version="3.6.200.qualifier"
+      version="3.6.300.qualifier"
       license-feature="org.eclipse.license"
       license-feature-version="0.0.0">
 
@@ -22,20 +22,20 @@
          unpack="false"/>
 
    <plugin
-         id="org.eclipse.equinox.launcher.gtk.solaris.sparc"
+         id="org.eclipse.equinox.launcher.gtk.solaris.x86_64"
          os="solaris"
          ws="gtk"
-         arch="sparc"
+         arch="x86_64"
          download-size="0"
          install-size="0"
          version="0.0.0"
          fragment="true"/>
 
    <plugin
-         id="org.eclipse.equinox.launcher.gtk.solaris.x86"
+         id="org.eclipse.equinox.launcher.gtk.solaris.sparcv9"
          os="solaris"
          ws="gtk"
-         arch="x86"
+         arch="sparcv9"
          download-size="0"
          install-size="0"
          version="0.0.0"
