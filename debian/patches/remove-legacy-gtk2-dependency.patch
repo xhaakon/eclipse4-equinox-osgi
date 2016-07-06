@@ -8,10 +8,10 @@ Subject: remove-legacy-gtk2-dependency
  2 files changed, 2 insertions(+), 2 deletions(-)
 
 diff --git a/features/org.eclipse.equinox.executable.feature/library/gtk/eclipseGtk.c b/features/org.eclipse.equinox.executable.feature/library/gtk/eclipseGtk.c
-index 1c60b3d..3929ec0 100644
+index 361c3d0..4388c39 100644
 --- a/features/org.eclipse.equinox.executable.feature/library/gtk/eclipseGtk.c
 +++ b/features/org.eclipse.equinox.executable.feature/library/gtk/eclipseGtk.c
-@@ -246,7 +246,7 @@ int showSplash( const char* featureImage )
+@@ -261,7 +261,7 @@ int showSplash( const char* featureImage )
  	shellHandle = gtk.gtk_window_new(GTK_WINDOW_TOPLEVEL);
  	gtk.gtk_window_set_decorated((GtkWindow*)(shellHandle), FALSE);
  	gtk.gtk_window_set_type_hint((GtkWindow*)(shellHandle), 4 /*GDK_WINDOW_TYPE_HINT_SPLASHSCREEN*/);
@@ -19,7 +19,7 @@ index 1c60b3d..3929ec0 100644
 +	gtk.g_signal_connect_data((gpointer)shellHandle, "destroy", (GCallback)(gtk.gtk_widget_destroyed), &shellHandle, NULL, 0);
  		
  	pixbuf = gtk.gdk_pixbuf_new_from_file(featureImage, NULL);
- 	image = gtk.gtk_image_new_from_pixbuf(pixbuf);
+ 	width = gtk.gdk_pixbuf_get_width(pixbuf);
 diff --git a/features/org.eclipse.equinox.executable.feature/library/gtk/make_linux.mak b/features/org.eclipse.equinox.executable.feature/library/gtk/make_linux.mak
 index 6abe017..8ec9e4e 100644
 --- a/features/org.eclipse.equinox.executable.feature/library/gtk/make_linux.mak
