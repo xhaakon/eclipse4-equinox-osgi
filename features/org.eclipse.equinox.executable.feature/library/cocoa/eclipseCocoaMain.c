@@ -1,13 +1,14 @@
 /*
- * Copyright (c) 2006, 2009 IBM Corporation and others.
+ * Copyright (c) 2006, 2015 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
- * which accompanies this distribution, and is available at 
+ * which accompanies this distribution, and is available at
  * http://www.eclipse.org/legal/epl-v10.html
- * 
+ *
  * Contributors:
  *    IBM Corporation - initial API and implementation
  *	  Andrew Niefer
+ *    Mikael Barbero
  */
 
 #include "eclipseCommon.h"
@@ -24,7 +25,6 @@
 #include <unistd.h>
 
 #include <CoreServices/CoreServices.h>
-#include <Carbon/Carbon.h>
 #include <mach-o/dyld.h>
 
 
@@ -49,17 +49,10 @@ int main( int argc, char* argv[] ) {
 	SInt32 systemVersion= 0;
 	if (Gestalt(gestaltSystemVersion, &systemVersion) == noErr) {
 		systemVersion &= 0xffff;
-#ifdef COCOA
 		if (systemVersion < 0x1050) {
 			displayMessage("Error", "This application requires Mac OS X 10.5 (Leopard) or greater.");
 			return 0;
 		}
-#else
-		if (systemVersion < 0x1020) {
-			displayMessage("Error", "This application requires Jaguar (Mac OS X >= 10.2)");
-			return 0;
-		}
-#endif
 	}
 
 	fgConsoleLog= fopen("/dev/console", "w");
@@ -75,14 +68,14 @@ int main( int argc, char* argv[] ) {
 			strncpy(fgAppPackagePath, argv[0], l);
 			fgAppPackagePath[l]= '\0';	// terminate result
 		}
-		
+
 		/* Get the main bundle for the app */
 		CFBundleRef mainBundle= CFBundleGetMainBundle();
 		if (mainBundle != NULL) {
-		
+
 			/* Get an instance of the info plist.*/
 			CFDictionaryRef bundleInfoDict= CFBundleGetInfoDictionary(mainBundle);
-						
+
 			/* If we succeeded, look for our property. */
 			if (bundleInfoDict != NULL) {
 				CFArrayRef ar= CFDictionaryGetValue(bundleInfoDict, CFSTR("Eclipse"));
@@ -149,7 +142,7 @@ static void dumpArgs(char *tag, int argc, char* argv[]) {
 
 /*
  * Expand $APP_PACKAGE, $JAVA_HOME, and does tilde expansion.
- 
+
 	A word beginning with an unquoted tilde character (~) is
 	subject to tilde expansion. All the characters up to a
 	slash (/) or the end of the word are treated as a username
@@ -159,10 +152,10 @@ static void dumpArgs(char *tag, int argc, char* argv[]) {
 	user's home directory).
  */
 static char *expandShell(char *arg, const char *appPackage, const char *javaRoot) {
-	
+
 	if (index(arg, '~') == NULL && index(arg, '$') == NULL)
 		return arg;
-	
+
 	char *buffer= strdup("");
 	char c, lastChar= ' ';
 	const char *cp= arg;
@@ -186,7 +179,7 @@ static char *expandShell(char *arg, const char *appPackage, const char *javaRoot
 			}
 			if (dir != NULL)
 				buffer= append(buffer, dir);
-				
+
 		} else if (c == '$') {
 			int l= strlen(APP_PACKAGE);
 			if (appPackage != NULL && strncmp(cp, APP_PACKAGE, l) == 0) {

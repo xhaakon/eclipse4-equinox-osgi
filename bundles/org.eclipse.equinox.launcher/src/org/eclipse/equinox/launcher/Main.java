@@ -11,6 +11,7 @@
  *     Red Hat Inc. - bug 373640, 379102
  *     Ericsson AB (Pascal Rapicault) - bug 304132
  *     Rapicorp, Inc - Default the configuration to Application Support (bug 461725)
+ *     Lars Vogel <Lars.Vogel@vogella.com> - Bug 221969
  *******************************************************************************/
 package org.eclipse.equinox.launcher;
 
@@ -258,7 +259,8 @@ public class Main {
 	/**
 	 * A structured form for a version identifier.
 	 * 
-	 * @see "http://java.sun.com/j2se/versioning_naming.html for information on valid version strings"
+	 * @see "http://www.oracle.com/technetwork/java/javase/versioning-naming-139433.html for information on valid version strings"
+	 * @see "http://openjdk.java.net/jeps/223 for information on the JavaSE-9 version JEP 223"
 	 */
 	static class Identifier {
 		private static final String DELIM = ". _-"; //$NON-NLS-1$
@@ -282,16 +284,16 @@ public class Main {
 			if (tokenizer.hasMoreTokens())
 				major = Integer.parseInt(tokenizer.nextToken());
 
-			// minor
-			if (tokenizer.hasMoreTokens())
-				minor = Integer.parseInt(tokenizer.nextToken());
-
 			try {
+				// minor
+				if (tokenizer.hasMoreTokens())
+					minor = Integer.parseInt(tokenizer.nextToken());
+
 				// service
 				if (tokenizer.hasMoreTokens())
 					service = Integer.parseInt(tokenizer.nextToken());
 			} catch (NumberFormatException nfe) {
-				// ignore the service qualifier in that case and default to 0
+				// ignore the minor and service qualifiers in that case and default to 0
 				// this will allow us to tolerate other non-conventional version numbers 
 			}
 		}
@@ -642,6 +644,8 @@ public class Main {
 			if (javaVersion != null && new Identifier(javaVersion).isGreaterEqualTo(new Identifier("1.9"))) { //$NON-NLS-1$
 				// Workaround for bug 466683. Some org.w3c.dom.* packages that used to be available from
 				// JavaSE's boot classpath are only available from the extension path in Java 9 b62.
+				// Workaround for bug 489958. javax.annotation.* types are only available from
+				// JavaSE-9's extension path in Java 9-ea+108. The identifier "1.9" could be changed to "9", but "1.9" works just as well.
 				type = PARENT_CLASSLOADER_EXT;
 			}
 		} catch (SecurityException e) {
@@ -1531,6 +1535,10 @@ public class Main {
 				else
 					message += ".  See the log file\n" + logFile.getAbsolutePath(); //$NON-NLS-1$
 				System.getProperties().put(PROP_EXITDATA, message);
+			} else {
+				// we have an exit code of 13, in most cases the user tries to start a 32/64 bit Eclipse
+				// on a 64/32 bit Eclipse
+				log("Are you trying to start an 64/32-bit Eclipse on a 32/64-JVM? These must be the same, as Eclipse uses native code.");
 			}
 			// Return "unlucky" 13 as the exit code. The executable will recognize
 			// this constant and display a message to the user telling them that

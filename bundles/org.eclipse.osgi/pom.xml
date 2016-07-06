@@ -14,12 +14,12 @@
   <parent>
     <artifactId>rt.equinox.framework</artifactId>
     <groupId>org.eclipse.equinox.framework</groupId>
-    <version>4.5.2-SNAPSHOT</version>
+    <version>4.6.0-SNAPSHOT</version>
     <relativePath>../../</relativePath>
   </parent>
   <groupId>org.eclipse.osgi</groupId>
   <artifactId>org.eclipse.osgi</artifactId>
-  <version>3.10.102-SNAPSHOT</version>
+  <version>3.11.0-SNAPSHOT</version>
   <packaging>eclipse-plugin</packaging>
 
   <build>
@@ -30,7 +30,7 @@
         <version>${tycho.version}</version>
         <configuration>
           <compilerArgs>
-            <arg>-warn:-raw,unchecked,hiding,unused,warningToken</arg>
+            <arg>-warn:-raw,unchecked,hiding,unused,warningToken,serial</arg>
           </compilerArgs>
         </configuration>
       </plugin>

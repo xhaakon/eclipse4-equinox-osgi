@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2014 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -10,14 +10,16 @@
  *******************************************************************************/
 package org.eclipse.osgi.container;
 
-import java.util.Arrays;
-import java.util.EnumSet;
+import java.util.*;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.eclipse.osgi.container.ModuleContainerAdaptor.ModuleEvent;
 import org.eclipse.osgi.internal.container.EquinoxReentrantLock;
 import org.eclipse.osgi.internal.debug.Debug;
 import org.eclipse.osgi.internal.messages.Msg;
 import org.eclipse.osgi.report.resolution.ResolutionReport;
+import org.eclipse.osgi.util.NLS;
 import org.osgi.framework.*;
 import org.osgi.framework.startlevel.BundleStartLevel;
 import org.osgi.framework.wiring.BundleRevision;
@@ -159,12 +161,7 @@ public abstract class Module implements BundleReference, BundleStartLevel, Compa
 	final EquinoxReentrantLock stateChangeLock = new EquinoxReentrantLock();
 	private final EnumSet<ModuleEvent> stateTransitionEvents = EnumSet.noneOf(ModuleEvent.class);
 	private final EnumSet<Settings> settings;
-	private final ThreadLocal<Boolean> inStartResolve = new ThreadLocal<Boolean>() {
-		@Override
-		protected Boolean initialValue() {
-			return Boolean.FALSE;
-		}
-	};
+	final AtomicInteger inStart = new AtomicInteger(0);
 	private volatile State state = State.INSTALLED;
 	private volatile int startlevel;
 	private volatile long lastModified;
@@ -297,6 +294,7 @@ public abstract class Module implements BundleReference, BundleStartLevel, Compa
 		boolean invalid = false;
 		try {
 			boolean acquired = stateChangeLock.tryLock(revisions.getContainer().getModuleLockTimeout(), TimeUnit.SECONDS);
+			Set<ModuleEvent> currentTransition = Collections.emptySet();
 			if (acquired) {
 				boolean isValidTransition = true;
 				switch (transitionEvent) {
@@ -319,14 +317,24 @@ public abstract class Module implements BundleReference, BundleStartLevel, Compa
 						break;
 				}
 				if (!isValidTransition) {
+					currentTransition = EnumSet.copyOf(stateTransitionEvents);
 					invalid = true;
 					stateChangeLock.unlock();
 				} else {
 					stateTransitionEvents.add(transitionEvent);
 					return;
 				}
+			} else {
+				currentTransition = EnumSet.copyOf(stateTransitionEvents);
 			}
-			throw new BundleException(Msg.Module_LockError + toString() + " " + transitionEvent + " " + stateTransitionEvents + (invalid ? " invalid" : ""), BundleException.STATECHANGE_ERROR); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$ 
+			Throwable cause;
+			if (invalid) {
+				cause = new IllegalStateException(NLS.bind(Msg.Module_LockStateError, transitionEvent, currentTransition));
+			} else {
+				cause = new TimeoutException(NLS.bind(Msg.Module_LockTimeout, revisions.getContainer().getModuleLockTimeout()));
+			}
+			String exceptonInfo = toString() + ' ' + transitionEvent + ' ' + currentTransition;
+			throw new BundleException(Msg.Module_LockError + exceptonInfo, BundleException.STATECHANGE_ERROR, cause);
 		} catch (InterruptedException e) {
 			Thread.currentThread().interrupt();
 			throw new BundleException(Msg.Module_LockError + toString() + " " + transitionEvent, BundleException.STATECHANGE_ERROR, e); //$NON-NLS-1$
@@ -386,36 +394,38 @@ public abstract class Module implements BundleReference, BundleStartLevel, Compa
 		}
 		BundleException startError = null;
 		boolean lockedStarted = false;
-		lockStateChange(ModuleEvent.STARTED);
+		// Indicate we are in the middle of a start.
+		// This must be incremented before we acquire the STARTED lock the first time.
+		inStart.incrementAndGet();
 		try {
+			lockStateChange(ModuleEvent.STARTED);
 			lockedStarted = true;
 			checkValid();
 			if (StartOptions.TRANSIENT_IF_AUTO_START.isContained(options) && !settings.contains(Settings.AUTO_START)) {
-				// Do nothing
+				// Do nothing; this is a request to start only if the module is set for auto start
 				return;
 			}
 			checkFragment();
 			persistStartOptions(options);
 			if (getStartLevel() > getRevisions().getContainer().getStartLevel()) {
 				if (StartOptions.TRANSIENT.isContained(options)) {
+					// it is an error to attempt to transient start a bundle without its start level met
 					throw new BundleException(Msg.Module_Transient_StartError, BundleException.START_TRANSIENT_ERROR);
 				}
-				// DO nothing
+				// Do nothing; start level is not met
 				return;
 			}
 			if (State.ACTIVE.equals(getState()))
 				return;
 			if (getState().equals(State.INSTALLED)) {
+				ResolutionReport report;
 				// must unlock to avoid out of order locks when multiple unresolved
 				// bundles are started at the same time from different threads
 				unlockStateChange(ModuleEvent.STARTED);
 				lockedStarted = false;
-				ResolutionReport report;
 				try {
-					inStartResolve.set(Boolean.TRUE);
 					report = getRevisions().getContainer().resolve(Arrays.asList(this), true);
 				} finally {
-					inStartResolve.set(Boolean.FALSE);
 					lockStateChange(ModuleEvent.STARTED);
 					lockedStarted = true;
 				}
@@ -445,10 +455,10 @@ public abstract class Module implements BundleReference, BundleStartLevel, Compa
 				event = ModuleEvent.STOPPED;
 			}
 		} finally {
-			inStartResolve.set(Boolean.FALSE);
 			if (lockedStarted) {
 				unlockStateChange(ModuleEvent.STARTED);
 			}
+			inStart.decrementAndGet();
 		}
 
 		if (event != null) {
@@ -693,7 +703,12 @@ public abstract class Module implements BundleReference, BundleStartLevel, Compa
 		return current == null ? false : current.hasLazyActivatePolicy();
 	}
 
-	final boolean inStartResolve() {
-		return inStartResolve.get().booleanValue();
+	/**
+	 * Used internally by the container to determine if any thread is in the middle
+	 * of a start operation on this module.
+	 * @return
+	 */
+	final boolean inStart() {
+		return inStart.get() > 0;
 	}
 }

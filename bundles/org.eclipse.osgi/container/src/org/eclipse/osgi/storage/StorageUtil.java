@@ -16,6 +16,7 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.util.Dictionary;
 import java.util.Hashtable;
+import java.util.concurrent.TimeUnit;
 import org.eclipse.osgi.internal.debug.Debug;
 import org.osgi.framework.*;
 
@@ -117,7 +118,7 @@ public class StorageUtil {
 
 			if (DEBUG) {
 				if (!success) {
-					Debug.println("  rm failed!!"); //$NON-NLS-1$
+					Debug.println("  rm failed!"); //$NON-NLS-1$
 				}
 			}
 
@@ -153,7 +154,7 @@ public class StorageUtil {
 		Dictionary<String, Object> properties = new Hashtable<String, Object>(7);
 		Dictionary<String, String> headers = context.getBundle().getHeaders();
 		properties.put(Constants.SERVICE_VENDOR, headers.get(Constants.BUNDLE_VENDOR));
-		properties.put(Constants.SERVICE_RANKING, new Integer(Integer.MAX_VALUE));
+		properties.put(Constants.SERVICE_RANKING, Integer.valueOf(Integer.MAX_VALUE));
 		properties.put(Constants.SERVICE_PID, context.getBundle().getBundleId() + "." + service.getClass().getName()); //$NON-NLS-1$
 		return context.registerService(name, service, properties);
 	}
@@ -196,7 +197,7 @@ public class StorageUtil {
 					if (readcount <= 0) /* if we didn't read anything */
 						break; /* leave the loop */
 				}
-			} else /* does not know its own length! */{
+			} else /* does not know its own length! */ {
 				length = BUF_SIZE;
 				classbytes = new byte[length];
 				readloop: while (true) {
@@ -224,5 +225,60 @@ public class StorageUtil {
 			}
 		}
 		return classbytes;
+	}
+
+	/**
+	 * To remain Java 6 compatible work around the unreliable renameTo() via
+	 * retries: http://bugs.java.com/view_bug.do?bug_id=6213298
+	 * 
+	 * @param from
+	 * @param to
+	 */
+	public static boolean move(File from, File to, boolean DEBUG) {
+		// Try several attempts with incremental sleep
+		final int maxTries = 10;
+		final int sleepStep = 200;
+		for (int tryCount = 0, sleep = sleepStep;; sleep += sleepStep, tryCount++) {
+			if (from.renameTo(to)) {
+				return true;
+			}
+
+			if (DEBUG) {
+				Debug.println("move: failed to rename " + from + " to " + to + " (" + (maxTries - tryCount) + " attempts remaining)"); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$ //$NON-NLS-4$
+			}
+
+			if (tryCount >= maxTries) {
+				break;
+			}
+
+			try {
+				TimeUnit.MILLISECONDS.sleep(sleep);
+			} catch (InterruptedException e) {
+				// Ignore
+			}
+		}
+
+		// Try a copy
+		try {
+			if (from.isDirectory()) {
+				copyDir(from, to);
+			} else {
+				readFile(new FileInputStream(from), to);
+			}
+
+			if (!rm(from, DEBUG)) {
+				Debug.println("move: failed to delete " + from + " after copy to " + to + ". Scheduling for delete on JVM exit."); //$NON-NLS-1$ //$NON-NLS-2$ //$NON-NLS-3$
+				from.deleteOnExit();
+			}
+			return true;
+		} catch (IOException e) {
+			if (DEBUG) {
+				Debug.println("move: failed to copy " + from + " to " + to); //$NON-NLS-1$ //$NON-NLS-2$
+				Debug.printStackTrace(e);
+			}
+
+			// Give up
+			return false;
+		}
 	}
 }

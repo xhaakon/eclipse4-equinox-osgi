@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2014 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -16,9 +16,7 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
-import org.eclipse.osgi.container.Module.StartOptions;
-import org.eclipse.osgi.container.Module.State;
-import org.eclipse.osgi.container.Module.StopOptions;
+import org.eclipse.osgi.container.Module.*;
 import org.eclipse.osgi.container.ModuleContainerAdaptor.ContainerEvent;
 import org.eclipse.osgi.container.ModuleContainerAdaptor.ModuleEvent;
 import org.eclipse.osgi.container.ModuleDatabase.Sort;
@@ -92,6 +90,8 @@ public final class ModuleContainer implements DebugOptionsListener {
 
 	private final long moduleLockTimeout;
 
+	private final boolean autoStartOnResolve;
+
 	boolean DEBUG_MONITOR_LAZY = false;
 
 	/**
@@ -123,6 +123,12 @@ public final class ModuleContainer implements DebugOptionsListener {
 		if (debugOptions != null) {
 			this.DEBUG_MONITOR_LAZY = debugOptions.getBooleanOption(Debug.OPTION_MONITOR_LAZY, false);
 		}
+
+		String autoStartOnResolveProp = adaptor.getProperty(EquinoxConfiguration.PROP_MODULE_AUTO_START_ON_RESOLVE);
+		if (autoStartOnResolveProp == null) {
+			autoStartOnResolveProp = Boolean.toString(true);
+		}
+		this.autoStartOnResolve = Boolean.parseBoolean(autoStartOnResolveProp);
 	}
 
 	/**
@@ -625,9 +631,17 @@ public final class ModuleContainer implements DebugOptionsListener {
 				// lock.
 				for (Module module : modulesResolved) {
 					try {
+						// avoid grabbing the lock if the timestamp has changed
+						if (timestamp != moduleDatabase.getRevisionsTimestamp()) {
+							return false; // need to try again
+						}
 						module.lockStateChange(ModuleEvent.RESOLVED);
 						modulesLocked.add(module);
 					} catch (BundleException e) {
+						// before throwing an exception here, see if the timestamp has changed
+						if (timestamp != moduleDatabase.getRevisionsTimestamp()) {
+							return false; // need to try again
+						}
 						// TODO throw some appropriate exception
 						throw new IllegalStateException(Msg.ModuleContainer_StateLockError, e);
 					}
@@ -695,34 +709,44 @@ public final class ModuleContainer implements DebugOptionsListener {
 		Set<Module> triggerSet = restartTriggers ? new HashSet<Module>(triggers) : Collections.<Module> emptySet();
 		if (restartTriggers) {
 			for (Module module : triggers) {
-				try {
-					if (module.getId() != 0 && Module.RESOLVED_SET.contains(module.getState())) {
-						secureAction.start(module, StartOptions.TRANSIENT);
-					}
-				} catch (BundleException e) {
-					adaptor.publishContainerEvent(ContainerEvent.ERROR, module, e);
-				} catch (IllegalStateException e) {
-					// been uninstalled
-					continue;
+				if (module.getId() != 0 && Module.RESOLVED_SET.contains(module.getState())) {
+					start(module, StartOptions.TRANSIENT_RESUME);
 				}
 			}
 		}
-		// This is questionable behavior according to the spec but this was the way equinox previously behaved
-		// Need to auto-start any persistently started bundles that got resolved
-		for (Module module : modulesLocked) {
-			if (module.inStartResolve() || module.getId() == 0 || triggerSet.contains(module)) {
-				continue;
-			}
-			try {
-				secureAction.start(module, StartOptions.TRANSIENT_IF_AUTO_START, StartOptions.TRANSIENT_RESUME);
-			} catch (BundleException e) {
-				adaptor.publishContainerEvent(ContainerEvent.ERROR, module, e);
-			} catch (IllegalStateException e) {
-				// been uninstalled
-				continue;
+		if (autoStartOnResolve) {
+			// This is questionable behavior according to the spec but this was the way equinox previously behaved
+			// Need to auto-start any persistently started bundles that got resolved
+			for (Module module : modulesLocked) {
+				// Note that we check inStart here.  There is still a timing issue that is impossible to avoid.
+				// Another thread could attempt to start the module but we could check inStart() before that thread
+				// increments inStart.  One thread will win the race to grab the module STARTED lock.  That thread
+				// will end up actually starting the module and the other thread will block.  If a timeout occurs
+				// the blocking thread will get an exception.
+				if (!module.inStart() && module.getId() != 0 && !triggerSet.contains(module)) {
+					start(module, StartOptions.TRANSIENT_IF_AUTO_START, StartOptions.TRANSIENT_RESUME);
+				}
 			}
 		}
 		return true;
+	}
+
+	private void start(Module module, StartOptions... options) {
+		try {
+			secureAction.start(module, options);
+		} catch (BundleException e) {
+			if (e.getType() == BundleException.STATECHANGE_ERROR) {
+				if (Module.ACTIVE_SET.contains(module.getState())) {
+					// There is still a timing issue here;
+					// but at least try to detect that another thread is starting the module
+					return;
+				}
+			}
+			adaptor.publishContainerEvent(ContainerEvent.ERROR, module, e);
+		} catch (IllegalStateException e) {
+			// been uninstalled
+			return;
+		}
 	}
 
 	private List<DynamicModuleRequirement> getDynamicRequirements(String dynamicPkgName, ModuleRevision revision) {
@@ -746,6 +770,15 @@ public final class ModuleContainer implements DebugOptionsListener {
 			}
 		}
 
+		if (!result.isEmpty()) {
+			// must check that the wiring does not export the package
+			for (ModuleCapability capability : wiring.getModuleCapabilities(PackageNamespace.PACKAGE_NAMESPACE)) {
+				if (dynamicPkgName.equals(capability.getAttributes().get(PackageNamespace.PACKAGE_NAMESPACE))) {
+					// the package is exported, must not allow dynamic import
+					return Collections.emptyList();
+				}
+			}
+		}
 		return result;
 	}
 
@@ -842,8 +875,7 @@ public final class ModuleContainer implements DebugOptionsListener {
 					} catch (BundleException e) {
 						adaptor.publishContainerEvent(ContainerEvent.ERROR, refreshModule, e);
 					}
-				}
-				if (!State.ACTIVE.equals(previousState)) {
+				} else {
 					iTriggers.remove();
 				}
 			}
@@ -1416,19 +1448,25 @@ public final class ModuleContainer implements DebugOptionsListener {
 			if (startlevel < 1) {
 				throw new IllegalArgumentException(Msg.ModuleContainer_NegativeStartLevelError + startlevel);
 			}
-			if (module.getStartLevel() == startlevel) {
+			int currentLevel = module.getStartLevel();
+			if (currentLevel == startlevel) {
 				return; // do nothing
 			}
 			moduleDatabase.setStartLevel(module, startlevel);
-			// queue start level operation in the background
-			// notice that we only do one start level operation at a time
-			CopyOnWriteIdentityMap<Module, FrameworkListener[]> dispatchListeners = new CopyOnWriteIdentityMap<Module, FrameworkListener[]>();
-			dispatchListeners.put(module, new FrameworkListener[0]);
-			ListenerQueue<Module, FrameworkListener[], Integer> queue = new ListenerQueue<Module, FrameworkListener[], Integer>(getManager());
-			queue.queueListeners(dispatchListeners.entrySet(), this);
+			// only queue the start level if
+			// 1) the current level is less than the new startlevel, may need to stop or
+			// 2) the module is marked for persistent activation, may need to start
+			if (currentLevel < startlevel || module.isPersistentlyStarted()) {
+				// queue start level operation in the background
+				// notice that we only do one start level operation at a time
+				CopyOnWriteIdentityMap<Module, FrameworkListener[]> dispatchListeners = new CopyOnWriteIdentityMap<Module, FrameworkListener[]>();
+				dispatchListeners.put(module, new FrameworkListener[0]);
+				ListenerQueue<Module, FrameworkListener[], Integer> queue = new ListenerQueue<Module, FrameworkListener[], Integer>(getManager());
+				queue.queueListeners(dispatchListeners.entrySet(), this);
 
-			// dispatch the start level job
-			queue.dispatchEventAsynchronous(MODULE_STARTLEVEL, startlevel);
+				// dispatch the start level job
+				queue.dispatchEventAsynchronous(MODULE_STARTLEVEL, startlevel);
+			}
 		}
 
 		@Override

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2003, 2013 IBM Corporation and others.
+ * Copyright (c) 2003, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -194,12 +194,12 @@ public class ReliableFile {
 				return null;
 			List<Integer> list = new ArrayList<Integer>(defaultMaxGenerations);
 			if (file.exists())
-				list.add(new Integer(0)); //base file exists
+				list.add(Integer.valueOf(0)); //base file exists
 			for (int i = 0; i < files.length; i++) {
 				if (files[i].startsWith(prefix)) {
 					try {
 						int id = Integer.parseInt(files[i].substring(prefixLen));
-						list.add(new Integer(id));
+						list.add(Integer.valueOf(id));
 					} catch (NumberFormatException e) {/*ignore*/
 					}
 				}
@@ -404,8 +404,12 @@ public class ReliableFile {
 		CacheInfo info = new CacheInfo(FILETYPE_VALID, checksum, newFile.lastModified(), newFile.length());
 		cacheFiles.put(newFile, info);
 		cleanup(generations, true);
-		lastGenerationFile = null;
-		lastGenerations = null;
+		if (!fileSharing) {
+			synchronized (lastGenerationLock) {
+				lastGenerationFile = null;
+				lastGenerations = null;
+			}
+		}
 	}
 
 	/**
@@ -666,8 +670,12 @@ public class ReliableFile {
 		ReliableFile rf = new ReliableFile(base);
 		int[] generations = getFileGenerations(base);
 		rf.cleanup(generations, false);
-		lastGenerationFile = null;
-		lastGenerations = null;
+		if (!fileSharing) {
+			synchronized (lastGenerationLock) {
+				lastGenerationFile = null;
+				lastGenerations = null;
+			}
+		}
 	}
 
 	/**
@@ -676,8 +684,12 @@ public class ReliableFile {
 	 * @param file
 	 */
 	public static void fileUpdated(File file) {
-		lastGenerationFile = null;
-		lastGenerations = null;
+		if (!fileSharing) {
+			synchronized (lastGenerationLock) {
+				lastGenerationFile = null;
+				lastGenerations = null;
+			}
+		}
 	}
 
 	/**

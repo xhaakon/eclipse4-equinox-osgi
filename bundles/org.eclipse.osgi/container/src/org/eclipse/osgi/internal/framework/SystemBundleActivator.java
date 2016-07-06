@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2003, 2015 IBM Corporation and others.
+ * Copyright (c) 2003, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -73,11 +73,13 @@ public class SystemBundleActivator implements BundleActivator {
 		register(bc, PermissionAdmin.class, sa, null);
 		register(bc, ConditionalPermissionAdmin.class, sa, null);
 
-		register(bc, Resolver.class, new ResolverImpl(new Logger(0)), false, null);
+		Hashtable<String, Object> props = new Hashtable<String, Object>(7);
+		props.clear();
+		props.put(Constants.SERVICE_RANKING, Integer.MIN_VALUE);
+		register(bc, Resolver.class, new ResolverImpl(new Logger(0), null), false, props);
 
 		register(bc, DebugOptions.class, dbgOptions, null);
 
-		Hashtable<String, Object> props = new Hashtable<String, Object>(7);
 		if (tccl != null) {
 			props.clear();
 			props.put("equinox.classloader.type", "contextClassLoader"); //$NON-NLS-1$ //$NON-NLS-2$
@@ -218,7 +220,7 @@ public class SystemBundleActivator implements BundleActivator {
 		Dictionary<String, String> headers = context.getBundle().getHeaders();
 		properties.put(Constants.SERVICE_VENDOR, headers.get(Constants.BUNDLE_VENDOR));
 		if (setRanking) {
-			properties.put(Constants.SERVICE_RANKING, new Integer(Integer.MAX_VALUE));
+			properties.put(Constants.SERVICE_RANKING, Integer.valueOf(Integer.MAX_VALUE));
 		}
 		properties.put(Constants.SERVICE_PID, context.getBundle().getBundleId() + "." + service.getClass().getName()); //$NON-NLS-1$
 		registrations.add(context.registerService(serviceClass, service, properties));

@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2013 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -12,10 +12,12 @@ package org.eclipse.osgi.internal.framework;
 
 import java.security.ProtectionDomain;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 import org.eclipse.osgi.container.*;
 import org.eclipse.osgi.container.Module.Settings;
 import org.eclipse.osgi.container.Module.State;
+import org.eclipse.osgi.internal.container.AtomicLazyInitializer;
 import org.eclipse.osgi.internal.hookregistry.ClassLoaderHook;
 import org.eclipse.osgi.internal.loader.*;
 import org.eclipse.osgi.internal.permadmin.BundlePermissions;
@@ -36,6 +38,9 @@ public class EquinoxContainerAdaptor extends ModuleContainerAdaptor {
 	private final ClassLoader moduleClassLoaderParent;
 	private final AtomicLong lastSecurityAdminFlush;
 
+	final AtomicLazyInitializer<Executor> executor = new AtomicLazyInitializer<Executor>();
+	final Callable<Executor> lazyExecutorCreator;
+
 	public EquinoxContainerAdaptor(EquinoxContainer container, Storage storage, Map<Long, Generation> initial) {
 		this.container = container;
 		this.storage = storage;
@@ -43,6 +48,55 @@ public class EquinoxContainerAdaptor extends ModuleContainerAdaptor {
 		this.initial = initial;
 		this.moduleClassLoaderParent = getModuleClassLoaderParent(container.getConfiguration());
 		this.lastSecurityAdminFlush = new AtomicLong();
+		this.lazyExecutorCreator = createLazyExecutorCreator(container.getConfiguration());
+	}
+
+	private Callable<Executor> createLazyExecutorCreator(EquinoxConfiguration config) {
+		String threadCntProp = config.getConfiguration(EquinoxConfiguration.PROP_RESOLVER_THREAD_COUNT);
+		int threadCntTmp;
+		try {
+			threadCntTmp = threadCntProp == null ? -1 : Integer.parseInt(threadCntProp);
+		} catch (NumberFormatException e) {
+			threadCntTmp = -1;
+		}
+		// use the number of processors - 1 because we use the current thread when rejected
+		final int maxThreads = threadCntTmp <= 0 ? Math.max(Runtime.getRuntime().availableProcessors() - 1, 1) : threadCntTmp;
+		return new Callable<Executor>() {
+			@Override
+			public Executor call() throws Exception {
+				if (maxThreads == 1) {
+					return new Executor() {
+						@Override
+						public void execute(Runnable command) {
+							command.run();
+						}
+					};
+				}
+				// Always want to go to zero threads when idle
+				int coreThreads = 0;
+				// idle timeout; make it short to get rid of threads quickly after resolve
+				int idleTimeout = 10;
+				// use sync queue to force thread creation
+				BlockingQueue<Runnable> queue = new SynchronousQueue<Runnable>();
+				// try to name the threads with useful name
+				ThreadFactory threadFactory = new ThreadFactory() {
+					@Override
+					public Thread newThread(Runnable r) {
+						Thread t = new Thread(r, "Resolver thread - " + EquinoxContainerAdaptor.this.toString()); //$NON-NLS-1$
+						t.setDaemon(true);
+						return t;
+					}
+				};
+				// use a rejection policy that simply runs the task in the current thread once the max threads is reached
+				RejectedExecutionHandler rejectHandler = new RejectedExecutionHandler() {
+					@Override
+					public void rejectedExecution(Runnable r, ThreadPoolExecutor exe) {
+						r.run();
+					}
+				};
+				return new ThreadPoolExecutor(coreThreads, maxThreads, idleTimeout, TimeUnit.SECONDS, queue, threadFactory, rejectHandler);
+			}
+		};
 	}
 
 	private static ClassLoader getModuleClassLoaderParent(EquinoxConfiguration configuration) {
@@ -266,5 +320,17 @@ public class EquinoxContainerAdaptor extends ModuleContainerAdaptor {
 	@Override
 	public DebugOptions getDebugOptions() {
 		return container.getConfiguration().getDebugOptions();
+	}
+
+	@Override
+	public Executor getResolverExecutor() {
+		return executor.getInitialized(lazyExecutorCreator);
+	}
+
+	public void shutdownResolverExecutor() {
+		Executor current = executor.getAndClear();
+		if (current instanceof ExecutorService) {
+			((ExecutorService) current).shutdown();
+		}
 	}
 }

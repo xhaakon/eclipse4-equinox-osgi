@@ -1,5 +1,5 @@
 /*******************************************************************************
- * Copyright (c) 2012, 2015 IBM Corporation and others.
+ * Copyright (c) 2012, 2016 IBM Corporation and others.
  * All rights reserved. This program and the accompanying materials
  * are made available under the terms of the Eclipse Public License v1.0
  * which accompanies this distribution, and is available at
@@ -12,6 +12,8 @@ package org.eclipse.osgi.container;
 
 import java.security.Permission;
 import java.util.*;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 import org.apache.felix.resolver.*;
 import org.eclipse.osgi.container.ModuleRequirement.DynamicModuleRequirement;
 import org.eclipse.osgi.container.namespaces.EquinoxFragmentNamespace;
@@ -55,8 +57,11 @@ final class ModuleResolver {
 	boolean DEBUG_WIRING = false;
 	boolean DEBUG_REPORT = false;
 
-	private final int DEFAULT_BATCH_SIZE = 1;
+	private static final int DEFAULT_BATCH_SIZE = Integer.MAX_VALUE;
+	private static final int BATCH_MIN_TIMEOUT = (int) TimeUnit.SECONDS.toMillis(5);
+	private static final int DEFAULT_BATCH_TIMEOUT = (int) TimeUnit.MINUTES.toMillis(2);
 	final int resolverRevisionBatchSize;
+	final int resolverBatchTimeout;
 
 	void setDebugOptions() {
 		DebugOptions options = adaptor.getDebugOptions();
@@ -75,12 +80,7 @@ final class ModuleResolver {
 	private static final Collection<String> NON_PAYLOAD_CAPABILITIES = Arrays.asList(IdentityNamespace.IDENTITY_NAMESPACE);
 	static final Collection<String> NON_PAYLOAD_REQUIREMENTS = Arrays.asList(HostNamespace.HOST_NAMESPACE, ExecutionEnvironmentNamespace.EXECUTION_ENVIRONMENT_NAMESPACE);
 
-	final ThreadLocal<Boolean> threadResolving = new ThreadLocal<Boolean>() {
-		@Override
-		protected Boolean initialValue() {
-			return Boolean.FALSE;
-		}
-	};
+	final ThreadLocal<Boolean> threadResolving = new ThreadLocal<Boolean>();
 	final ModuleContainerAdaptor adaptor;
 
 	/**
@@ -88,20 +88,25 @@ final class ModuleResolver {
 	 * and resolver.
 	 * @param adaptor the container adaptor
 	 */
-	ModuleResolver(ModuleContainerAdaptor adaptor) {
+	ModuleResolver(final ModuleContainerAdaptor adaptor) {
 		this.adaptor = adaptor;
+
 		setDebugOptions();
+
 		String batchSizeConfig = this.adaptor.getProperty(EquinoxConfiguration.PROP_RESOLVER_REVISION_BATCH_SIZE);
-		int tempBatchSize;
+		this.resolverRevisionBatchSize = parseInteger(batchSizeConfig, DEFAULT_BATCH_SIZE, 1);
+		String batchTimeoutConfig = this.adaptor.getProperty(EquinoxConfiguration.PROP_RESOLVER_BATCH_TIMEOUT);
+		this.resolverBatchTimeout = parseInteger(batchTimeoutConfig, DEFAULT_BATCH_TIMEOUT, BATCH_MIN_TIMEOUT);
+
+	}
+
+	private static int parseInteger(String sInteger, int defaultValue, int minValue) {
 		try {
-			tempBatchSize = batchSizeConfig == null ? DEFAULT_BATCH_SIZE : Integer.parseInt(batchSizeConfig);
+			int result = sInteger == null ? defaultValue : Integer.parseInt(sInteger);
+			return result < minValue ? minValue : result;
 		} catch (NumberFormatException e) {
-			tempBatchSize = DEFAULT_BATCH_SIZE;
+			return defaultValue;
 		}
-		if (tempBatchSize < 1) {
-			tempBatchSize = DEFAULT_BATCH_SIZE;
-		}
-		this.resolverRevisionBatchSize = tempBatchSize;
 	}
 
 	/**
@@ -249,7 +254,6 @@ final class ModuleResolver {
 						if (substituted == null) {
 							substituted = new ArrayList<String>();
 						}
-						substituted.add(packageName);
 						if (!substituted.contains(packageName)) {
 							substituted.add(packageName);
 						}
@@ -261,6 +265,12 @@ final class ModuleResolver {
 	}
 
 	private static void removeNonEffectiveRequirements(ListIterator<ModuleRequirement> iRequirements, List<ModuleWire> requiredWires) {
+
+		Set<ModuleRequirement> wireRequirements = new HashSet<ModuleRequirement>();
+		for (ModuleWire mw : requiredWires) {
+			wireRequirements.add(mw.getRequirement());
+		}
+
 		rewind(iRequirements);
 		while (iRequirements.hasNext()) {
 			ModuleRequirement requirement = iRequirements.next();
@@ -269,20 +279,15 @@ final class ModuleResolver {
 			if (effective != null && !Namespace.EFFECTIVE_RESOLVE.equals(effective)) {
 				iRequirements.remove();
 			} else {
-				// check the resolution directive
-				Object resolution = requirement.getDirectives().get(Namespace.REQUIREMENT_RESOLUTION_DIRECTIVE);
-				if (Namespace.RESOLUTION_OPTIONAL.equals(resolution)) {
-					boolean found = false;
-					// need to check the wires to see if the optional requirement is resolved
-					wires: for (ModuleWire wire : requiredWires) {
-						if (wire.getRequirement().equals(requirement)) {
-							found = true;
-							break wires;
-						}
-					}
-					if (!found) {
-						// optional requirement is not resolved
+
+				if (!wireRequirements.contains(requirement)) {
+					if (!PackageNamespace.PACKAGE_NAMESPACE.equals(requirement.getNamespace())) {
 						iRequirements.remove();
+					} else {
+						Object resolution = requirement.getDirectives().get(Namespace.REQUIREMENT_RESOLUTION_DIRECTIVE);
+						if (!PackageNamespace.RESOLUTION_DYNAMIC.equals(resolution)) {
+							iRequirements.remove();
+						}
 					}
 				}
 			}
@@ -466,7 +471,12 @@ final class ModuleResolver {
 		return version instanceof Version ? (Version) version : Version.emptyVersion;
 	}
 
-	class ResolveProcess extends ResolveContext implements Comparator<Capability>, FelixResolveContext {
+	static class ResolutionTimeout extends RuntimeException {
+		private static final long serialVersionUID = 1L;
+		// Just a marker exception to break out of extra long resolution
+	}
+
+	class ResolveProcess extends ResolveContext implements Comparator<Capability>, FelixResolveContext, Executor {
 
 		class ResolveLogger extends Logger {
 			private Map<Resource, ResolutionException> errors = null;
@@ -476,11 +486,11 @@ final class ModuleResolver {
 			}
 
 			@Override
-			public void logUsesConstraintViolation(Resource resource, ResolutionException error) {
+			public void logUsesConstraintViolation(Resource resource, ResolutionError error) {
 				if (errors == null) {
 					errors = new HashMap<Resource, ResolutionException>();
 				}
-				errors.put(resource, error);
+				errors.put(resource, error.toException());
 				if (DEBUG_USES) {
 					Debug.println(new StringBuilder("RESOLVER: Uses constraint violation") //$NON-NLS-1$
 							.append(SEPARATOR).append(TAB) //
@@ -518,7 +528,7 @@ final class ModuleResolver {
 		 */
 		private final Collection<ModuleRevision> disabled;
 		private final Collection<ModuleRevision> triggers;
-		private final List<ModuleRevision> optionals;
+		private final Collection<ModuleRevision> optionals;
 		private final boolean triggersMandatory;
 		private final ModuleDatabase moduleDatabase;
 		private final Map<ModuleRevision, ModuleWiring> wirings;
@@ -530,6 +540,8 @@ final class ModuleResolver {
 		private volatile boolean currentlyResolvingMandatory = false;
 		private final Set<Resource> transitivelyResolveFailures = new LinkedHashSet<Resource>();
 		private final Set<Resource> failedToResolve = new HashSet<Resource>();
+		private final long resolveTimeout = System.currentTimeMillis() + resolverBatchTimeout;
+		private volatile boolean checkTimeout = true;
 		/*
 		 * Used to generate the UNRESOLVED_PROVIDER resolution report entries.
 		 * 
@@ -546,9 +558,12 @@ final class ModuleResolver {
 			this.disabled = new HashSet<ModuleRevision>(unresolved);
 			this.triggers = new ArrayList<ModuleRevision>(triggers);
 			this.triggersMandatory = triggersMandatory;
-			this.optionals = new ArrayList<ModuleRevision>(unresolved);
+			this.optionals = new LinkedHashSet<ModuleRevision>(unresolved);
 			if (this.triggersMandatory) {
-				this.optionals.removeAll(triggers);
+				// do this the hard way because the 'optimization' in removeAll hurts us
+				for (ModuleRevision triggerRevision : triggers) {
+					this.optionals.remove(triggerRevision);
+				}
 			}
 			this.wirings = new HashMap<ModuleRevision, ModuleWiring>(wirings);
 			this.previouslyResolved = new HashSet<ModuleRevision>(wirings.keySet());
@@ -819,33 +834,62 @@ final class ModuleResolver {
 
 		@Override
 		public Collection<Resource> getOndemandResources(Resource host) {
-			String hostBSN = ((ModuleRevision) host).getSymbolicName();
-			if (hostBSN == null) {
-				return Collections.emptyList();
-			}
 			List<ModuleCapability> hostCaps = ((ModuleRevision) host).getModuleCapabilities(HostNamespace.HOST_NAMESPACE);
 			if (hostCaps.isEmpty()) {
 				return Collections.emptyList();
 			}
-			ModuleCapability hostCap = hostCaps.get(0);
-			String matchFilter = "(" + EquinoxFragmentNamespace.FRAGMENT_NAMESPACE + "=" + hostBSN + ")"; //$NON-NLS-1$//$NON-NLS-2$//$NON-NLS-3$
-			Requirement fragmentRequirement = ModuleContainer.createRequirement(EquinoxFragmentNamespace.FRAGMENT_NAMESPACE, Collections.<String, String> singletonMap(Namespace.REQUIREMENT_FILTER_DIRECTIVE, matchFilter), Collections.<String, Object> emptyMap());
-			List<ModuleCapability> candidates = moduleDatabase.findCapabilities(fragmentRequirement);
-			// filter out disabled fragments and singletons
-			filterDisabled(candidates.listIterator());
-			Collection<Resource> ondemandFragments = new ArrayList<Resource>(candidates.size());
-			for (Iterator<ModuleCapability> iCandidates = candidates.iterator(); iCandidates.hasNext();) {
-				ModuleCapability candidate = iCandidates.next();
-				ModuleRequirement hostReq = candidate.getRevision().getModuleRequirements(HostNamespace.HOST_NAMESPACE).get(0);
-				if (hostReq.matches(hostCap)) {
-					ondemandFragments.add(candidate.getResource());
+
+			Collection<Resource> ondemandFragments = new ArrayList<Resource>();
+			for (String hostBSN : getHostBSNs(hostCaps)) {
+				String matchFilter = "(" + EquinoxFragmentNamespace.FRAGMENT_NAMESPACE + "=" + hostBSN + ")"; //$NON-NLS-1$//$NON-NLS-2$//$NON-NLS-3$
+				Requirement fragmentRequirement = ModuleContainer.createRequirement(EquinoxFragmentNamespace.FRAGMENT_NAMESPACE, Collections.<String, String> singletonMap(Namespace.REQUIREMENT_FILTER_DIRECTIVE, matchFilter), Collections.<String, Object> emptyMap());
+				List<ModuleCapability> candidates = moduleDatabase.findCapabilities(fragmentRequirement);
+				// filter out disabled fragments and singletons
+				filterDisabled(candidates.listIterator());
+				for (Iterator<ModuleCapability> iCandidates = candidates.iterator(); iCandidates.hasNext();) {
+					ModuleCapability candidate = iCandidates.next();
+					ModuleRequirement hostReq = candidate.getRevision().getModuleRequirements(HostNamespace.HOST_NAMESPACE).get(0);
+					for (ModuleCapability hostCap : hostCaps) {
+						if (hostReq.matches(hostCap)) {
+							ondemandFragments.add(candidate.getResource());
+							break;
+						}
+					}
 				}
 			}
+
 			return ondemandFragments;
 		}
 
+		private Collection<String> getHostBSNs(List<ModuleCapability> hostCaps) {
+			if (hostCaps.size() == 1) {
+				// optimization and likely the only case since you are not supposed to have multiple host caps
+				return getHostBSNs(hostCaps.get(0));
+			}
+			Set<String> result = new HashSet<String>();
+			for (ModuleCapability hostCap : hostCaps) {
+				result.addAll(getHostBSNs(hostCap));
+			}
+			return result;
+		}
+
+		@SuppressWarnings("unchecked")
+		private Collection<String> getHostBSNs(ModuleCapability moduleCapability) {
+			Object namesAttr = moduleCapability.getAttributes().get(HostNamespace.HOST_NAMESPACE);
+			if (namesAttr instanceof String) {
+				return Collections.singletonList((String) namesAttr);
+			}
+			if (namesAttr instanceof String[]) {
+				return Arrays.asList((String[]) namesAttr);
+			}
+			if (namesAttr instanceof Collection) {
+				return (Collection<String>) namesAttr;
+			}
+			return Collections.emptyList();
+		}
+
 		ModuleResolutionReport resolve() {
-			if (threadResolving.get().booleanValue()) {
+			if (threadResolving()) {
 				// throw up a runtime exception, if this is caused by a resolver hook
 				// then it will get caught at the call to the resolver hook and a proper exception is thrown
 				throw new IllegalStateException(Msg.ModuleResolver_RecursiveError);
@@ -959,23 +1003,31 @@ final class ModuleResolver {
 			// make a copy so we do not modify the input
 			revisions = new LinkedList<ModuleRevision>(revisions);
 			List<Resource> toResolve = new ArrayList<Resource>();
-			for (Iterator<ModuleRevision> iResources = revisions.iterator(); iResources.hasNext();) {
-				ModuleRevision single = iResources.next();
-				iResources.remove();
-				if (!wirings.containsKey(single) && !failedToResolve.contains(single)) {
-					toResolve.add(single);
-				}
-				if (toResolve.size() == resolverRevisionBatchSize || !iResources.hasNext()) {
-					if (DEBUG_ROOTS) {
-						Debug.println("Resolver: resolving " + toResolve.size() + " in batch."); //$NON-NLS-1$ //$NON-NLS-2$
-						for (Resource root : toResolve) {
-							Debug.println("    Resolving root bundle: " + root); //$NON-NLS-1$
-						}
+			try {
+				for (Iterator<ModuleRevision> iResources = revisions.iterator(); iResources.hasNext();) {
+					ModuleRevision single = iResources.next();
+					iResources.remove();
+					if (!wirings.containsKey(single) && !failedToResolve.contains(single)) {
+						toResolve.add(single);
 					}
-					resolveRevisions(toResolve, isMandatory, logger, result);
-					toResolve.clear();
+					if (toResolve.size() == resolverRevisionBatchSize || !iResources.hasNext()) {
+						if (DEBUG_ROOTS) {
+							Debug.println("Resolver: resolving " + toResolve.size() + " in batch."); //$NON-NLS-1$ //$NON-NLS-2$
+							for (Resource root : toResolve) {
+								Debug.println("    Resolving root bundle: " + root); //$NON-NLS-1$
+							}
+						}
+						resolveRevisions(toResolve, isMandatory, logger, result);
+						toResolve.clear();
+					}
+					maxUsedMemory = Math.max(maxUsedMemory, Runtime.getRuntime().freeMemory() - initialFreeMemory);
 				}
-				maxUsedMemory = Math.max(maxUsedMemory, Runtime.getRuntime().freeMemory() - initialFreeMemory);
+			} catch (ResolutionTimeout timeoutException) {
+				// revert back to single bundle resolves
+				resolveRevisionsIndividually(isMandatory, logger, result, toResolve, revisions);
+			} catch (OutOfMemoryError memoryError) {
+				// revert back to single bundle resolves
+				resolveRevisionsIndividually(isMandatory, logger, result, toResolve, revisions);
 			}
 
 			if (DEBUG_ROOTS) {
@@ -985,14 +1037,29 @@ final class ModuleResolver {
 			}
 		}
 
+		private void resolveRevisionsIndividually(boolean isMandatory, ResolveLogger logger, Map<Resource, List<Wire>> result, Collection<Resource> toResolve, Collection<ModuleRevision> revisions) throws ResolutionException {
+			checkTimeout = false;
+			for (Resource resource : toResolve) {
+				if (!wirings.containsKey(resource) && !failedToResolve.contains(resource)) {
+					resolveRevisions(Collections.singletonList(resource), isMandatory, logger, result);
+				}
+			}
+			for (Resource resource : revisions) {
+				if (!wirings.containsKey(resource) && !failedToResolve.contains(resource)) {
+					resolveRevisions(Collections.singletonList(resource), isMandatory, logger, result);
+				}
+			}
+		}
+
 		private void resolveRevisions(List<Resource> revisions, boolean isMandatory, ResolveLogger logger, Map<Resource, List<Wire>> result) throws ResolutionException {
+			boolean applyTransitiveFailures = true;
 			currentlyResolving = revisions;
 			currentlyResolvingMandatory = isMandatory;
 			transitivelyResolveFailures.clear();
 			Map<Resource, List<Wire>> interimResults = null;
 			try {
 				transitivelyResolveFailures.addAll(revisions);
-				interimResults = new ResolverImpl(logger).resolve(this);
+				interimResults = new ResolverImpl(logger, this).resolve(this);
 				applyInterimResultToWiringCopy(interimResults);
 				if (DEBUG_ROOTS) {
 					Debug.println("Resolver: resolved " + interimResults.size() + " bundles."); //$NON-NLS-1$ //$NON-NLS-2$
@@ -1009,13 +1076,23 @@ final class ModuleResolver {
 						result.put(interimResultEntry.getKey(), interimResultEntry.getValue());
 					}
 				}
+			} catch (ResolutionTimeout timeoutException) {
+				applyTransitiveFailures = false;
+				throw timeoutException;
+			} catch (OutOfMemoryError memoryError) {
+				applyTransitiveFailures = false;
+				throw memoryError;
 			} finally {
-				transitivelyResolveFailures.addAll(logger.getUsesConstraintViolations().keySet());
-				if (interimResults != null) {
-					transitivelyResolveFailures.removeAll(interimResults.keySet());
+				if (applyTransitiveFailures) {
+					transitivelyResolveFailures.addAll(logger.getUsesConstraintViolations().keySet());
+					if (interimResults != null) {
+						transitivelyResolveFailures.removeAll(interimResults.keySet());
+					}
+					// what is left did not resolve
+					if (!transitivelyResolveFailures.isEmpty()) {
+						failedToResolve.addAll(transitivelyResolveFailures);
+					}
 				}
-				// what is left did not resolve
-				failedToResolve.addAll(transitivelyResolveFailures);
 				currentlyResolving = null;
 				currentlyResolvingMandatory = false;
 			}
@@ -1187,13 +1264,16 @@ final class ModuleResolver {
 
 		private Map<Resource, List<Wire>> resolveDynamic() throws ResolutionException {
 			List<Capability> dynamicMatches = findProviders0(dynamicReq.getOriginal(), dynamicReq);
-			return new ResolverImpl(new Logger(0)).resolve(this, dynamicReq.getRevision(), dynamicReq.getOriginal(), dynamicMatches);
+			return new ResolverImpl(new Logger(0), null).resolve(this, dynamicReq.getRevision(), dynamicReq.getOriginal(), dynamicMatches);
 		}
 
 		private void filterResolvable() {
 			Collection<ModuleRevision> enabledCandidates = new ArrayList<ModuleRevision>(unresolved);
 			hook.filterResolvable(InternalUtils.asListBundleRevision((List<? extends BundleRevision>) enabledCandidates));
-			disabled.removeAll(enabledCandidates);
+			// do this the hard way because the 'optimization' in removeAll hurts us
+			for (ModuleRevision enabledRevision : enabledCandidates) {
+				disabled.remove(enabledRevision);
+			}
 			for (ModuleRevision revision : disabled) {
 				reportBuilder.addEntry(revision, Entry.Type.FILTERED_BY_RESOLVER_HOOK, null);
 				if (DEBUG_HOOKS) {
@@ -1413,5 +1493,22 @@ final class ModuleResolver {
 			// TODO is there some bug in the resolver?
 			return null;
 		}
+
+		@Override
+		public void execute(Runnable command) {
+			if (checkTimeout && resolveTimeout < System.currentTimeMillis()) {
+				checkTimeout = false;
+				throw new ResolutionTimeout();
+			}
+			adaptor.getResolverExecutor().execute(command);
+		}
+	}
+
+	protected boolean threadResolving() {
+		Boolean resolvingValue = this.threadResolving.get();
+		if (resolvingValue == null) {
+			return false;
+		}
+		return resolvingValue.booleanValue();
 	}
 }
